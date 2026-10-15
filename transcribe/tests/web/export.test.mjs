@@ -67,7 +67,8 @@ test("📄 Soubor ▾ of the minutes: open, save as, copy the path or the file; 
   assert.match(rest, /\\skills\\recordingz-zapis\\SKILL\.md\. Údaje o schůzce: začátek 2026-09-04T14:00:00; účastníci /, "the installed skill and the meeting");
   assert.match(p.$("sumOpen").textContent, /Otevřít/);
   p.$("sumOpen").click();
-  await waitFor(() => /otevřeno v .*summary\.md/.test(p.$("status").textContent), "opened");
+  // "v <program>" where .md has one (the Windows default or Nastavení), else "ve výchozí aplikaci" (CI)
+  await waitFor(() => /otevřeno ve? .*summary\.md/.test(p.$("status").textContent), "opened");
   menu.open = true;
   p.doc.body.click();
   assert.ok(!menu.open, "a click elsewhere closes it");
