@@ -1,6 +1,6 @@
 [package]
 name = "recordingz-review"
-version = "2.0.0"
+version = "2.0.1"
 description = "recordingz review page as a desktop window (Tauri shell around the same page and server)"
 edition = "2021"
 publish = false

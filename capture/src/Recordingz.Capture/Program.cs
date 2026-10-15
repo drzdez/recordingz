@@ -15,7 +15,7 @@ static class Program
     [STAThread]
     static int Main(string[] args)
     {
-        var cfg = InstallerFolder.LoadConfig(out var installerFolder);
+        var cfg = InstallerFolder.LoadConfig(out var installerFolder, out var migrated);
         string? unusable = null;
         try
         {
@@ -30,6 +30,8 @@ static class Program
         }
         using var fileLog = new FileLog(Path.Combine(cfg.OutDir, "recordingz.log"));
         Log.Sink = fileLog.Write;
+        foreach (var note in migrated)  // taken over from teamsrec 1.x before the log was open
+            fileLog.Write(note.Level, note.Text);
         if (installerFolder is not null)
             Log.Info($"recordings folder from the installer: {installerFolder}");
         if (unusable is not null)

@@ -8,7 +8,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <RootNamespace>Recordingz.Capture</RootNamespace>
     <AssemblyName>recordingz-capture</AssemblyName>
-    <Version>2.0.0</Version>
+    <Version>2.0.1</Version>
     <InvariantGlobalization>false</InvariantGlobalization>
     <!-- window capture measures and grabs in physical pixels on every monitor, whatever its scale -->
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>

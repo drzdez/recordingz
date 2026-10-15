@@ -20,6 +20,11 @@ def test_every_part_carries_the_suite_version():
     assert tomllib.loads((REPO / "transcribe/pyproject.toml").read_text(encoding="utf-8"))["project"]["version"] == v
     assert tomllib.loads((REPO / "review/src-tauri/Cargo.toml").read_text(encoding="utf-8"))["package"]["version"] == v
     assert json.loads((REPO / "review/src-tauri/tauri.conf.json").read_text(encoding="utf-8"))["version"] == v
+    # and the lock files, which a version bump alone leaves behind (CI installs with --frozen and would not notice)
+    lock = tomllib.loads((REPO / "transcribe/uv.lock").read_text(encoding="utf-8"))
+    assert next(p["version"] for p in lock["package"] if p["name"] == "recordingz") == v
+    cargo = tomllib.loads((REPO / "review/src-tauri/Cargo.lock").read_text(encoding="utf-8"))
+    assert next(p["version"] for p in cargo["package"] if p["name"] == "recordingz-review") == v
 
 
 def changelog() -> dict[str, tuple[date, str]]:

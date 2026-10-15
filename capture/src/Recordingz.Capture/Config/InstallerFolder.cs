@@ -38,9 +38,10 @@ public static class InstallerFolder
     public static void Report(string outDir, Action<string, string> set) => set("OutDirCurrent", Path.GetFullPath(outDir));
 
     /// <summary>Apply + load + report against the real registry; a registry problem never stops the app.</summary>
-    public static AppConfig LoadConfig(out string? applied)
+    /// <param name="migrated">What was taken over from teamsrec 1.x, for the log once it is open.</param>
+    public static AppConfig LoadConfig(out string? applied, out IReadOnlyList<LegacyMigration.Note> migrated)
     {
-        LegacyMigration.Run();  // before anything reads or writes recordingz's own config and registry
+        migrated = LegacyMigration.Run();  // before anything reads or writes recordingz's own config and registry
         var path = AppConfig.DefaultPath;
         applied = null;
         try

@@ -3,6 +3,11 @@
 Notes for each release, newest first, written by hand for the people using it. The heading format is fixed
 (`## <version> – <date>`); a test keeps an entry for the current version.
 
+## 2.0.1 – 2026-10-15
+
+- The capture app's log now says what it took over from teamsrec 1.x on the first start (the settings and the
+  registry values); before, those lines were lost because they came before the log was open.
+
 ## 2.0.0 – 2026-10-15
 
 - **teamsrec is now recordingz.** The recording app, the transcription and the review window are one project with

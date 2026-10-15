@@ -43,20 +43,30 @@ public static class LegacyMigration
         return true;
     }
 
-    /// <summary>Both, against the real places; a problem is logged and never stops the app.</summary>
-    public static void Run()
+    /// <summary>A line for the log: (INFO | WARNING, text).</summary>
+    public readonly record struct Note(string Level, string Text);
+
+    /// <summary>Both, against the real places (the config only without RECORDINGZ_CONFIG).</summary>
+    public static IReadOnlyList<Note> Run() =>
+        Run(string.IsNullOrEmpty(Environment.GetEnvironmentVariable("RECORDINGZ_CONFIG")) ? AppConfig.DefaultPath : null,
+            LegacyConfigPath, LegacyKey, InstallerFolder.Key);
+
+    /// <summary>Both; what was taken over is returned, not logged: it runs before the log is open (the log lives in
+    /// the recordings folder, which this config names). A problem never stops the app.</summary>
+    public static IReadOnlyList<Note> Run(string? path, string legacy, string fromKey, string toKey)
     {
+        var notes = new List<Note>();
         try
         {
-            if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("RECORDINGZ_CONFIG"))
-                && CopyConfig(AppConfig.DefaultPath, LegacyConfigPath))
-                Log.Info($"config of teamsrec 1.x copied from {LegacyConfigPath}");
-            if (CopyRegistry(LegacyKey, InstallerFolder.Key))
-                Log.Info($@"registry values of teamsrec 1.x copied from HKCU\{LegacyKey}");
+            if (path is not null && CopyConfig(path, legacy))
+                notes.Add(new("INFO", $"config of teamsrec 1.x copied from {legacy}"));
+            if (CopyRegistry(fromKey, toKey))
+                notes.Add(new("INFO", $@"registry values of teamsrec 1.x copied from HKCU\{fromKey}"));
         }
         catch (Exception e)
         {
-            Log.Warn($"teamsrec 1.x settings not taken over: {e.Message}");
+            notes.Add(new("WARNING", $"teamsrec 1.x settings not taken over: {e.Message}"));
         }
+        return notes;
     }
 }
