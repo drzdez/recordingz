@@ -1,0 +1,93 @@
+using Recordingz.Capture.App;
+using Recordingz.Capture.Calendar;
+using Recordingz.Capture.Core;
+using Recordingz.Capture.Detection;
+
+namespace Recordingz.Capture.Tests;
+
+/// <summary>2026-10-07: a call in the "Team standup" meeting was not linked to the calendar (Outlook read the
+/// filter date 10/07 as 10 July in Czech), and nothing said so; the Teams window may be minimized while presenting.</summary>
+public class WarningsTests
+{
+    private static readonly DateTime Day = new(2026, 10, 7);
+
+    private static CalendarItem Item(string subject, int h, int m, int minutes, bool teams = true) =>
+        new(subject, Day.AddHours(h).AddMinutes(m), Day.AddHours(h).AddMinutes(m + minutes), "", new List<string>(), teams);
+
+    [Fact]
+    public void The_calendar_lookup_says_why_there_is_no_clear_meeting()
+    {
+        var items = new List<CalendarItem> { Item("Tooling discussion", 9, 0, 90, teams: false), Item("Team standup", 9, 15, 15) };
+        var at = Day.AddHours(9).AddMinutes(10);  // both run: Tooling discussion since 9:00, the standup from 9:15 (10 min ahead counts)
+        Assert.Equal("off", Outlook.Lookup(false, at, "Team standup", _ => items).Problem);
+        var (cal, problem) = Outlook.Lookup(true, at, "Team standup", _ => items);
+        Assert.Equal(("Team standup", ""), (cal!.Subject, problem));  // by title: clear
+        (cal, problem) = Outlook.Lookup(true, at, "teams-call", _ => items);
+        Assert.Equal("ambiguous", problem);  // by time while two meetings run
+        Assert.Contains("víc schůzek", AppLogic.CalendarWarning(problem, cal));
+        Assert.Equal("none", Outlook.Lookup(true, Day.AddHours(20), "teams-call", _ => items).Problem);
+        Assert.Equal("unavailable", Outlook.Lookup(true, at, "x", _ => throw new InvalidOperationException("no COM")).Problem);
+        Assert.Equal("", AppLogic.CalendarWarning("", cal));
+    }
+
+    [Fact]
+    public void Both_day_orders_are_asked_so_any_locale_finds_the_day()
+    {
+        Assert.Equal(new[] { "10/07/2026", "07/10/2026" },
+                     Outlook.DateOrders.Select(f => Day.ToString(f, System.Globalization.CultureInfo.InvariantCulture)));
+    }
+
+    [Fact]
+    public void The_participants_are_seen_only_in_a_meeting_window_that_is_not_minimized()
+    {
+        var meeting = new TeamsWindow("Team standup | Microsoft Teams", false, 1200, 800);
+        Assert.True(CallDetector.MeetingViewVisible(new[] { meeting }));
+        Assert.False(CallDetector.MeetingViewVisible(new[] { meeting with { Minimized = true } }));
+        Assert.False(CallDetector.MeetingViewVisible(new[]
+        {
+            new TeamsWindow("Kompaktní zobrazení schůzky | Team standup | Microsoft Teams", false, 400, 240),
+            new TeamsWindow("Calendar | Microsoft Teams", false, 1600, 1000),
+            new TeamsWindow("Ovládací panel sdílení | Microsoft Teams", false, 600, 60),
+        }), "the compact view, a nav section and the sharing toolbar show no participants");
+        Assert.True(CallDetector.Presenting(new[] { "Ovládací panel sdílení | Microsoft Teams" }));
+        Assert.False(CallDetector.Presenting(new[] { "Team standup | Microsoft Teams" }));
+    }
+
+    [Fact]
+    public void Text_only_when_the_user_surely_does_not_present()
+    {
+        Assert.False(AppLogic.Discreet(presenting: false, acceptsNotifications: true));
+        Assert.True(AppLogic.Discreet(presenting: true, acceptsNotifications: true));
+        Assert.True(AppLogic.Discreet(presenting: false, acceptsNotifications: false));  // full screen / cannot tell
+    }
+}
+
+/// <summary>2026-10-09: Outlook asked "a program is trying to access e-mail address information" – the body and the
+/// organizer are guarded. Only subject, times, location and the participants' names are read now.</summary>
+public class OutlookGuardTests
+{
+    [Fact]
+    public void A_teams_meeting_is_recognised_by_the_location_outlook_gives_it()
+    {
+        Assert.True(Outlook.IsTeamsLocation("Microsoft Teams Meeting"));
+        Assert.True(Outlook.IsTeamsLocation("Schůzka Microsoft Teams"));
+        Assert.True(Outlook.IsTeamsLocation("Room 4; Microsoft Teams Meeting"));
+        Assert.False(Outlook.IsTeamsLocation(""));
+        Assert.False(Outlook.IsTeamsLocation("Zasedačka 2"));
+    }
+
+    /// <summary>Against the real Outlook of this PC, only with RECORDINGZ_LIVE_OUTLOOK=1 (CI has none).</summary>
+    [Fact]
+    public void Live_outlook_gives_todays_meetings_with_names_and_no_organizer()
+    {
+        if (Environment.GetEnvironmentVariable("RECORDINGZ_LIVE_OUTLOOK") != "1") return;
+        var day = DateTime.Parse(Environment.GetEnvironmentVariable("RECORDINGZ_LIVE_DAY") ?? DateTime.Today.ToString("s"));
+        var items = Outlook.Items(day);
+        foreach (var it in items)
+            Console.WriteLine($"LIVE {it.Start:dd.MM HH:mm} {it.Subject} teams={it.Teams} attendees={it.Attendees.Count} organizer='{it.Organizer}'");
+        Assert.NotEmpty(items);
+        Assert.All(items, it => Assert.Equal(day.Date, it.Start.Date));
+        Assert.All(items, it => Assert.Equal("", it.Organizer));
+        Assert.Contains(items, it => it.Teams && it.Attendees.Count > 0);
+    }
+}

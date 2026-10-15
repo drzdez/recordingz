@@ -1,0 +1,234 @@
+"""Configuration: one TOML file shared with the capture app, overridable per CLI call.
+
+Location (first found wins): $RECORDINGZ_CONFIG, %APPDATA%/recordingz/recordingz.toml (Windows),
+~/.config/recordingz/recordingz.toml (elsewhere). Missing file = defaults.
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import sys
+import tomllib
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+from typing import Any
+
+
+@dataclass(frozen=True)
+class TranscribeSettings:
+    provider: str = "whisperx"
+    language: str = "auto"  # auto | BCP-47 code
+    languages: tuple[str, ...] = ("cs", "sk", "en")  # with auto: detect only among these, on several 30 s windows
+    when_recording: str = "ask"  # review page jobs when the capture app starts recording: ask | stop | continue
+    per_speaker_language: bool = True  # with auto: a speaker whose own speech is in another of `languages` is
+                                       # transcribed again in that language (mixed cs/sk meetings)
+    model: str = "large-v3"
+    compute_type: str = "float16"
+    batch_size: int = 16
+    beam_size: int = 5
+    align: bool = True
+    diarize: bool = True
+    diarize_model: str = "pyannote/speaker-diarization-community-1"
+    openai_model: str = "gpt-4o-transcribe-diarize"  # provider = "openai" (cloud: the audio goes to OpenAI)
+    elevenlabs_model: str = "scribe_v2"                # provider = "elevenlabs" (cloud: the audio goes to ElevenLabs)
+    cloud_provider: str = "elevenlabs"  # emergency fast track (fasttrack.py): the cloud transcription + diarization service
+    glossary: tuple[str, ...] = ()
+    device: str = "cuda"
+
+
+@dataclass(frozen=True)
+class VideoSettings:
+    enabled: bool = True
+    fps: float = 2.0
+
+
+@dataclass(frozen=True)
+class VoiceprintSettings:
+    enabled: bool = False  # voice prints are biometric data of colleagues: opt in (config --init asks)
+    threshold: float = 0.55  # cosine similarity needed to name a label by voice (calibrated 2026-09-11, lab/FINDINGS.md)
+    margin: float = 0.10  # ... and how far ahead of the runner-up person it must be
+    min_seconds: float = 30.0  # labels with less speech are neither recognised nor enrolled
+    max_prints: int = 20  # prints kept per person; over that the weakest goes (voiceprints.prune)
+
+
+@dataclass(frozen=True)
+class RetentionSettings:
+    audio_days: int = 0  # delete the audio + window videos of finished recordings older than this; 0 = keep
+    trash_days: int = 30  # meetings in the trash (Do koše) are deleted for good after this; 0 = only by hand
+
+
+@dataclass(frozen=True)
+class SummarizeSettings:
+    enabled: bool = True  # part of `process`; failures (no model / no API key) are logged, not fatal
+    provider: str = "ollama"  # ollama (local GPU) | anthropic (Claude API) | openai (OpenAI API)
+    model: str = "gemma4:31b"  # ollama tag, or a Claude model id such as claude-opus-5
+    language: str = "cs"  # language of the minutes, independent of the meeting language
+    ollama_url: str = "http://localhost:11434"
+    ollama_think: bool = False  # let thinking models reason first (slower, sometimes better)
+    ollama_max_ctx: int = 20480  # context window cap; gemma4:31b + 20k ctx still fits 24 GB VRAM (38k spilled 12 % to CPU:
+    #                             30 min instead of 1). Longer transcripts are summarized in parts and merged.
+    ollama_timeout_s: int = 1800
+    compare: tuple[str, ...] = ()  # extra "provider:model" runs written to <stem>.summary.<model>.md (POC comparison)
+    compare_auto: bool = True  # write them by itself (processing, regenerating); off: only when ticked on the page
+    offer: str = ""  # "provider:model" preselected in the page's minutes model dropdown; "" = provider + model above
+    cloud_model: str = "claude-opus-5-5"  # emergency fast track (fasttrack.py): the Claude model of the minutes
+    openai_url: str = "https://api.openai.com/v1"  # provider = "openai": OpenAI, or another Chat Completions API
+
+
+@dataclass(frozen=True)
+class Config:
+    out_dir: Path = field(default_factory=lambda: Path.home() / "meetings")
+    user_name: str = ""  # [user] name: the person behind the microphone in live recordings
+    people_display: str = "nick"  # [people] display: first | full | nick (nick falls back to first)
+    calendar_outlook: bool = False  # [calendar] outlook: read title/participants from classic Outlook (COM)
+    md_viewer: str = ""  # [viewer] md: the program that opens minutes (.md) from the page; "" = the Windows default
+    transcribe: TranscribeSettings = field(default_factory=TranscribeSettings)
+    video: VideoSettings = field(default_factory=VideoSettings)
+    voiceprints: VoiceprintSettings = field(default_factory=VoiceprintSettings)
+    summarize: SummarizeSettings = field(default_factory=SummarizeSettings)
+    retention: RetentionSettings = field(default_factory=RetentionSettings)
+    source_path: Path | None = None  # where the config was loaded from, None = defaults
+
+    @property
+    def inbox_dir(self) -> Path:
+        return self.out_dir / "_inbox"
+
+
+def default_config_path() -> Path:
+    env = os.environ.get("RECORDINGZ_CONFIG")
+    if env:
+        return Path(env)
+    if sys.platform == "win32":
+        base = Path(os.environ.get("APPDATA", Path.home() / "AppData" / "Roaming"))
+    else:
+        base = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
+    return base / "recordingz" / "recordingz.toml"
+
+
+def legacy_config_path() -> Path:
+    """Where teamsrec 1.x (the suite's name before 2.0) kept the config."""
+    return default_config_path().parent.parent / "teamsrec" / "teamsrec.toml"
+
+
+def migrate_legacy_config(path: Path, legacy: Path) -> bool:
+    """Copy teamsrec 1.x's config to recordingz's place, once: only while recordingz has none. The old file stays."""
+    if path.exists() or not legacy.is_file():
+        return False
+    path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(legacy, path)
+    return True
+
+
+def _section(data: dict[str, Any], name: str) -> dict[str, Any]:
+    sec = data.get(name, {})
+    return sec if isinstance(sec, dict) else {}
+
+
+def _build(cls, values: dict[str, Any]):
+    known = {f for f in cls.__dataclass_fields__}
+    kwargs = {}
+    for k, v in values.items():
+        if k not in known:
+            continue
+        if k in ("glossary", "compare", "languages"):
+            v = tuple(str(x) for x in v)
+        kwargs[k] = v
+    return cls(**kwargs)
+
+
+def load_config(path: Path | None = None) -> Config:
+    """Load the TOML config; a missing file yields defaults. Unknown keys are ignored."""
+    if path is None and not os.environ.get("RECORDINGZ_CONFIG"):
+        migrate_legacy_config(default_config_path(), legacy_config_path())
+    path = path or default_config_path()
+    if not path.exists():
+        return Config()
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    rec = _section(data, "recordings")
+    out_dir = Path(rec["out_dir"]).expanduser() if "out_dir" in rec else Config().out_dir
+    return Config(
+        out_dir=out_dir,
+        user_name=str(_section(data, "user").get("name", "")).strip(),
+        people_display=str(_section(data, "people").get("display", "nick")).strip() or "nick",
+        calendar_outlook=bool(_section(data, "calendar").get("outlook", False)),
+        md_viewer=str(_section(data, "viewer").get("md", "")).strip(),
+        transcribe=_build(TranscribeSettings, _section(data, "transcribe")),
+        video=_build(VideoSettings, _section(data, "video")),
+        voiceprints=_build(VoiceprintSettings, _section(data, "voiceprints")),
+        summarize=_build(SummarizeSettings, _section(data, "summarize")),
+        retention=_build(RetentionSettings, _section(data, "retention")),
+        source_path=path,
+    )
+
+
+def with_overrides(cfg: Config, **overrides: Any) -> Config:
+    """Apply CLI overrides: top-level keys map to Config, dotted keys ('transcribe.language') to sections."""
+    top: dict[str, Any] = {}
+    sections: dict[str, dict[str, Any]] = {}
+    for key, value in overrides.items():
+        if value is None:
+            continue
+        if "." in key:
+            sec, k = key.split(".", 1)
+            sections.setdefault(sec, {})[k] = value
+        else:
+            top[key] = value
+    for sec, vals in sections.items():
+        top[sec] = replace(getattr(cfg, sec), **vals)
+    return replace(cfg, **top)
+
+
+DEFAULT_TOML = """\
+[user]
+name = "{user_name}"         # you: live recordings name your microphone track after this (empty = off)
+
+[people]
+display = "nick"             # how people appear in exports and minutes: first | full | nick (no nickname -> first)
+
+[calendar]
+outlook = {outlook}              # classic Outlook on this PC (COM, local): meeting title + participants for recordings
+
+[capture]
+prompt_default = "record"    # the capture app: what the "Record?" prompt does when nobody answers in 45 s: record | skip
+
+[recordings]
+out_dir = "{out_dir}"
+
+[transcribe]
+provider = "whisperx"
+language = "auto"            # auto | cs | sk | en
+languages = ["cs", "sk", "en"]  # auto picks among these only (a noisy first 30 s once came out as "ru")
+model = "large-v3"
+compute_type = "float16"     # float16 | int8_float16 | int8
+batch_size = 16
+align = true
+diarize = true
+diarize_model = "pyannote/speaker-diarization-community-1"
+glossary = []                # domain terms added to the ASR prompt
+
+[video]
+enabled = true
+fps = 2
+
+[voiceprints]
+enabled = {voiceprints}              # recognise people by voice (biometric data of colleagues, local file _speakers/voiceprints.json; docs/privacy.md)
+threshold = 0.55             # cosine similarity needed; margin = lead over the runner-up
+margin = 0.10
+min_seconds = 30             # a speaker must talk this long before their voice is compared or stored
+max_prints = 20              # voice prints kept per person; over that the weakest one goes (mixed, outlier, redundant)
+
+[summarize]
+enabled = true               # run as part of `process`
+provider = "ollama"          # ollama = local GPU (ollama pull <model>) | anthropic = Claude API (RECORDINGZ_ANTHROPIC_API_KEY)
+model = "gemma4:31b"         # ollama tag, or e.g. "claude-opus-5" with provider = "anthropic"
+language = "cs"              # language of the minutes
+ollama_think = false         # thinking mode for local models: slower, sometimes better
+ollama_max_ctx = 20480       # keep the whole model on the GPU (24 GB); longer transcripts are summarized in parts
+compare = []                 # e.g. ["anthropic:claude-opus-5"] -> extra <stem>.summary.claude-opus-5.md for comparison
+compare_auto = true          # write them by itself; false = only when "srovnávací zápis" is ticked on the page
+
+[retention]
+audio_days = 0               # delete audio + window videos of finished recordings after N days (0 = keep); texts stay
+trash_days = 30              # meetings put in the trash are deleted for good after N days (0 = only when emptied by hand)
+"""

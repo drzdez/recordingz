@@ -1,0 +1,637 @@
+# recordingz – user guide
+
+The tool transcribes meeting recordings, works out who spoke when, and saves the transcript next to the recording.
+It works on one recordings folder (default `D:\meetings`), where both the live recordings of the capture app and
+imports of Teams recordings end up.
+
+The review page itself is in Czech; button labels and messages are quoted here as they appear on the page.
+
+## 1. Installation (Windows, NVIDIA GPU)
+
+Once:
+
+1. **Tools:** `winget install astral-sh.uv Gyan.FFmpeg GitHub.cli` (gh only for development).
+2. **Sources and environment:**
+   ```
+   git clone https://github.com/drzdez/recordingz D:\projects\recordingz
+   cd D:\projects\recordingz\transcribe
+   uv sync --extra all
+   ```
+   This downloads Python 3.12, torch with CUDA 12.8 (~3 GB) and everything else. It needs NVIDIA driver 570 or newer.
+3. **Hugging Face** (the speaker models are behind a licence):
+   - sign up at huggingface.co, and on https://huggingface.co/pyannote/speaker-diarization-community-1 click
+     "Agree and access repository";
+   - log in: `.venv\Scripts\hf.exe auth login` (a code for the browser). The token is stored in your profile, nothing else.
+4. **Model for the minutes.** The default is a local model through Ollama, so the transcript never leaves the PC:
+   ```
+   winget install Ollama.Ollama
+   ollama pull gemma4:31b        # 20 GB, fits 24 GB VRAM
+   ```
+   The alternative is the Claude API (better minutes, the transcript goes to Anthropic's cloud): in the settings
+   choose Claude as the summary service and a model such as `claude-opus-5-5`, and enter the key from
+   https://console.anthropic.com/ under **Nastavení → Klíče API** (or set the environment variable
+   `RECORDINGZ_ANTHROPIC_API_KEY`; the tool's own name on purpose: a plain `ANTHROPIC_API_KEY` would be found by other
+   Anthropic tools such as Claude Code, which would offer to bill against it). A claude.ai Max subscription does not
+   cover the API; credit is prepaid in the Console. The minutes of a 70-minute meeting took 36k input and 7k output
+   tokens, about 0.35 USD.
+5. **Configuration:** `bin\recordingz.cmd config --init` creates `%APPDATA%\recordingz\recordingz.toml` and asks
+   for your name and whether it may read the calendar of classic Outlook on this PC (`[calendar] outlook`). With the
+   calendar each recording gets the right meeting title and the list of participants: capture when the call starts,
+   transcribe when it imports a recording (by its start time). It is read locally through COM; nothing leaves the PC.
+   The new Outlook (no COM) provides no calendar; then the title from the Teams window stays. Your name is stored as
+   `[user] name` and used for live recordings: the microphone track is only your voice, so your replies get your name
+   without guessing. An empty name turns this off. Then adjust `out_dir` and `glossary` (see chapter 5) – easiest on
+   the **Nastavení** page.
+6. **The command from anywhere:** add `D:\projects\recordingz\transcribe\bin` to PATH (Settings → environment variables),
+   or call `bin\recordingz.cmd` with its full path. The launcher finds the WinGet ffmpeg by itself.
+
+Check: `recordingz config` must show `ffmpeg: ok` and the right `out_dir`.
+
+The first transcription downloads the models (~5 GB: whisper large-v3, alignment for the language, pyannote, OCR),
+so the first run takes a few minutes longer.
+
+The review page can also run as a desktop window (`review/` in the repository, Tauri); see `review/README.md`.
+
+## 2. Daily use
+
+### A Teams meeting recording (the most common case)
+
+1. In Teams open the meeting recording and download it (file `<Title>-YYYYMMDD_HHMMSS-Meeting Recording.mp4`).
+2. Move it to `D:\meetings\_inbox\`.
+3. Run
+   ```
+   recordingz process
+   ```
+   The import takes the title and time from the file name, works out from the video who spoke when, transcribes
+   the sound and saves the results. The processed file moves to `_inbox\done\`.
+
+70 minutes of recording take about 2 minutes (video) + 3.5 minutes (transcript) on an RTX 5090; longer on a weaker card.
+
+### The newest recording with one click
+
+A call is recorded from its first second, as soon as Teams takes the microphone, with no clicking: the tray only
+shows "Nahrávám: …". A recording can be discarded at any time from the tray icon's menu (Abort & delete). Who prefers
+to be asked sets "Na začátku hovoru v Teams" in the settings (`[capture] prompt_default = "ask"`: a "Zahodit?" box,
+kept without an answer within 45 s, or `"skip"`: discarded without an answer). The capture app is also watched every
+5 minutes by the Windows scheduled task `recordingz`: if it crashed, it starts again (a second instance quits
+by itself).
+
+A double click on the tray icon (or a click on its "Saved …" balloon) opens the review page, on that recording.
+
+The desktop shortcut **recordingz – zpracovat poslední** (or `bin\recordingz-process-latest.cmd`) imports what is in the
+`_inbox` and processes it, then the newest recording: transcript, export and minutes. The window stays open so the
+result can be read. The same from a terminal: `recordingz process --latest`.
+
+`latest` works in place of a stem in every command, e.g. `recordingz label-speakers latest`
+or `recordingz summarize latest --force`.
+
+### One particular file
+
+```
+recordingz transcribe "C:\downloads\Porada-20260904_090000-Meeting Recording.mp4"
+```
+
+A file without a sidecar is imported automatically. The original file stays where it is.
+
+### Any audio or video (a voice memo, a phone recording, another tool)
+
+```
+recordingz import "C:\memos\meeting.m4a" --title "Supplier meeting" --start "2026-09-04 09:00" --participants "Jana Nováková,Petr Svoboda"
+recordingz process 2026-09-04_0900_supplier-meeting
+```
+
+Without `--title` and `--start` the time comes from the file's metadata, or its modification time, and the title from
+the file name. A list of participants improves the spelling of names and helps OCR read the name labels in the video.
+
+### Live recordings from the capture app
+
+For live recordings capture also records the Teams windows as videos `<stem>_screen<N>.mp4`, and transcribe reads the
+highlighted name labels from them just as in downloaded recordings, so the other participants get names from the
+picture. Your voice gets the name from `[user] name`: the part of the diarization that coincides with microphone
+activity is you. The others stay `SPEAKER_XX` until voice prints or you name them. Playback recordings
+(*Record playback*) have no microphone track, so no name comes from it.
+
+### Language per speaker and invented sentences
+
+A mixed meeting (you speak Czech, colleagues Slovak) used to get one language for everybody, and your Czech came out
+half Slovak ("Tak ja bych možná začal"). Now, after the speakers are separated, each speaker's language is detected
+from their own replies (for anyone who speaks at least 20 s), and whoever clearly speaks another language from
+`[transcribe] languages` than the meeting gets their replies transcribed again in their language. Such a reply has
+`language: cs` in the transcript. To turn it off: `[transcribe] per_speaker_language = false`; it only applies with
+`language = "auto"`. It costs about half a minute extra.
+
+Whisper sometimes "hears" a sentence in silence, a click or music – typically "Ďakujem za pozornosť.", "Titulky
+vytvořil…" or a web address. Such replies are dropped, as are short replies much quieter than the rest of the
+recording (in the log: `dropped N invented replies`).
+
+### Deleting the audio after a while
+
+Audio takes ~0.5 GB per hour (microphone, system sound, mix, window videos). Once a meeting is finished – it has a
+transcript and minutes and every speaker has a name – the audio is no longer needed:
+
+```
+recordingz purge-audio --older-than 90 --dry-run   # only lists what would be deleted and how much it frees
+recordingz purge-audio --older-than 90             # deletes (asks first)
+```
+
+`_sys.wav`, `_mic.wav`, `_mix.wav` and `_screen*.mp4` are deleted; transcript, subtitles, minutes, names and the
+sidecar stay, and the sidecar notes `audio_purged`. Recordings where someone is still unnamed stay whole (the page
+needs voice samples for them). Automatically after every `process`: `[retention] audio_days = 90` (default `0` =
+keep). Deleted audio cannot be transcribed again.
+
+### Deleting a whole meeting: the trash
+
+Under the speaker cards (or under the offer to transcribe a meeting that has no transcript) are **🗑 Do koše** and
+**Smazat hned**; both ask for a second click. *Do koše* moves the meeting's folder to `<out_dir>/.trash/`: it
+leaves the list and every filter and shows only under the state filter **🗑 v koši**, each with the days it has left
+(„smaže se za 12 dní“). Open one there for **Obnovit** (back where it was), **Smazat natrvalo** or **Vysypat koš**.
+The trash empties itself after `[retention] trash_days` (Nastavení → Uchování → „Vysypávat koš po (dnech)“, default
+30, `0` = only by hand), checked when the page starts and after processing. *Smazat hned* skips the trash. Deleting for
+good also drops the voice prints that meeting gave; a meeting that is being processed or waits in the queue, or is
+being recorded, cannot be deleted until that ends or is cancelled.
+
+### Transcription in the cloud (OpenAI, ElevenLabs)
+
+The default transcription is local WhisperX on the graphics card. Next to it there are two cloud services:
+
+| `[transcribe] provider` | model (`openai_model` / `elevenlabs_model`) | what it does |
+|---|---|---|
+| `whisperx` | `large-v3` | local, glossary in the prompt, language detection, voice prints |
+| `openai` | `gpt-4o-transcribe-diarize` | speakers A/B/…, no glossary, no language, no word times, no voice prints |
+| `elevenlabs` | `scribe_v2` | speakers, word times, language; no glossary and no voice prints |
+
+**The cloud sends the meeting's audio out** (see [privacy.md](privacy.md)). Enter the key under **Nastavení** on the
+review page (it is stored in the Windows Credential Manager), or in the environment variable
+`RECORDINGZ_OPENAI_API_KEY` / `RECORDINGZ_ELEVENLABS_API_KEY` (or the usual `OPENAI_API_KEY` / `ELEVENLABS_API_KEY`), which
+wins. The audio is compressed before it is sent (Opus; OpenAI has a 25 MB limit).
+
+To try it without changing the settings: `recordingz compare-transcribe <recording> --provider openai` writes
+`<stem>.openai.txt` next to the main transcript (which stays as it is); on the page it is under the Přepis tab, in the
+selector on the right. The first comparison (a 16-minute stand-up in Slovak):
+
+| | time | sample (a first name, a product name, a colloquial verb) |
+|---|---|---|
+| WhisperX (local) | ~1.5 min | name ✓, product name ✗, verb ✓ |
+| ElevenLabs `scribe_v2` | 37 s | name ✓ (without diacritics), product name ✓, verb ✓; also writes "uhm" and repetitions, longer replies |
+| OpenAI `gpt-4o-transcribe-diarize` | 3 min | name ✗, product name ✗, verb ✗ |
+
+ElevenLabs was the most accurate, WhisperX close behind, free and without sending the audio anywhere; OpenAI was
+clearly worse.
+
+### Voice prints
+
+Voice prints are biometric data of colleagues: they are **off** by default (`[voiceprints] enabled`, `config --init`
+asks), and whoever does not want to be recognised by voice gets the tick in the Hlas column of the Lidé tab removed –
+their prints are deleted at once and no new ones are made. What is stored, where, what leaves the PC, and a note for
+colleagues: [privacy.md](privacy.md).
+
+Whom you have named once (on the page or with `label-speakers`) is recognised by voice in later recordings: **confirming**
+a name stores a voice print from the diarization in `_speakers\voiceprints.json` (only on this PC, at most 20 prints per
+person – `[voiceprints] max_prints`, in Nastavení "Otisků na osobu" – and only ones that add something new – an almost identical sample is dropped). Over the limit the weakest print
+goes: first one of poor quality (flagged as possibly two voices, an outlier that agrees with the person's other prints
+far less than they agree with each other – mixed voices, broken audio, a wrong name – or one from under a minute of
+speech), otherwise the one closest to another print. Prints from different headsets and rooms stay.
+
+What the application only guessed – a name label from the video, your voice from the microphone track, a match with a
+print – **is not stored permanently**: it stays with that meeting and the card shows "nepotvrzeno". Such a name gets
+into neither the shared list of people nor the prints until you save it, so a mistake is not learned (a misread name
+label from the video would otherwise create a person and a print). The voice sample stays in the recording's
+transcript, so it can be confirmed later.
+
+In a new recording each unknown speaker is compared with the prints, and when the match is high enough and clearly the
+best, it gets the name at once. On the page this shows in green as "poznáno po hlase: Karel Horák (shoda 0.72) – …";
+correct a wrong match by changing the name. Settings `[voiceprints]`: `enabled`, `threshold` (the match needed),
+`margin` (the lead over the second best). Delete one person's prints with
+`recordingz people forget-voice <id>`; the whole `voiceprints.json` can be deleted at any time.
+
+A direct (1:1) call is named after the other person: the capture reads the call window ("Karel Horák | Microsoft
+Teams"). When such a recording has exactly one other voice that spoke at least 20 s and no calendar meeting is linked,
+that voice gets the caller's name if the caller is a known person and the voice prints agree or found nobody
+("podle přímého hovoru: …", unconfirmed until you save). When the voice resembles somebody else, neither name is used
+and the card asks "⚠ přímý hovor s Karel Horák, ale hlas připomíná Jan Novák (shoda 0.83) – kdo to je?" with a button
+for each; a caller who is not in the people list yet is offered with "použít toto jméno". Saving the name stores the
+voice print, so the next call with that person is recognised.
+
+**Lidé (společné) → the person** has three views:
+
+- **Vzorky pro rozpoznávání** – the prints recognition really uses (at most `max_prints`), each with ▶ replies and its
+  similarity to the person's *other* prints (green = matches, yellow = a bit different – another headset, orange ⚠ =
+  listen, red ⚠ = very different; the reason in the tooltip). *Nepoužívat* takes a print out of recognition: the
+  name in the meeting stays, and the print does not come back when the meeting is saved again (*Nepoužité vzorky*
+  lists them, *vrátit* undoes it). *→ jinému…* says it is somebody else's voice: the group in the meeting gets that
+  person, the print moves to them, and the meeting gets "✎ upraveno". Below, *Přidat vzorek z jeho schůzek* lists the
+  person's other groups, the most similar first; *＋ přidat* (a guessed group is confirmed by it), with all slots
+  taken *＋ místo nejslabšího*.
+- **Ve schůzkách** – every group named after the person in every meeting, confirmed or guessed by the application
+  (voice, Teams video, microphone, direct call), with the same colours against all their prints and the closest other
+  person; ✓ Potvrdit, ✗ Není to (the name and the group's print go, the guess does not come back), → jinému…
+- **Všechny repliky** – every reply of the person (1.5 s and more) with its *own* voice compared with their prints:
+  it finds the places where somebody else speaks inside the person's group. The replies' voices are computed on the
+  graphics card only when you ask (*Vyhodnotit repliky*, with an estimate and a second click; about half a minute for
+  an hour's meeting, kept in `<stem>.reply_voices.json`), then sortable by similarity, length or date, each playable.
+
+Minutes written before the last change of names or replies are marked **zastaralý** on their tab (and above their
+text). When every minutes of a meeting is outdated, the meeting is not done: it shows **✎ zápis zastaralý** in the list
+(also the filter *✎ zastaralý zápis*) and above its speaker cards, with *Přegenerovat zápis…*; one up-to-date minutes
+by any model clears the mark. The
+transcript itself is always current – every change is saved to it and the texts are exported again at once.
+
+An older recording with unknown speakers can be compared with the prints collected since, without a new transcript:
+on the page the button "Zkusit poznat neznámé po hlase" above the cards, in a terminal
+`recordingz recognize <stem>` (without a stem it goes through all recordings; `--summary` regenerates the
+minutes where it recognised somebody).
+
+A voice print is a colleague's biometric data. It stays local and only saves naming the speakers by hand every time;
+tell the team, just as about the recording itself.
+
+A recording without sound: when the audio device delivers nothing (a headset asleep, a dongle switched to another
+profile), capture marks it `audio_silent` in the sidecar. Such a recording is not transcribed (`transcribe` stops
+with a message) and `latest` skips it, so "process the newest" takes the newest recording where something can be heard.
+
+An on-site meeting without Teams: in the tray menu *Record on-site meeting (microphone only)*. Only the microphone is
+recorded (the on-site microphone setting is part of the device name, on a laptop the microphone array; it must be
+enabled in Windows); title and participants come from the calendar; it ends with *Stop & keep*. Everybody is on one
+microphone, so your voice is not named from it; names come from voice prints and the diarization, the rest you add on
+the page.
+
+## 3. Output
+
+Every recording has its own folder `D:\meetings\YYYY\MM\<stem>\` (stem = `2026-09-03_1331_orbis-future-version`: date,
+time and meeting title). Every file in it carries the stem in its name, so it stays unambiguous when forwarded. The
+folder gets:
+
+| File | Content |
+|---|---|
+| `<stem>.summary.md` | the minutes: summary, topics, decisions, action items (who / what / due / time in the recording), open questions, terms, speakers |
+| `<stem>.summary.<model>.md` | minutes from another model (comparison) |
+| `<stem>.txt` | readable transcript: header (title, start, length, language, speakers) and lines `[hh:mm:ss] Name: text`; `?:` = a reply the diarization gave nobody |
+| `<stem>.srt` | subtitles, to play next to the video |
+| `<stem>.transcript.json` | the full transcript with words and times, input for further processing |
+| `<stem>.speakers_video.json` | who spoke when according to the video (only Teams imports with video and live window videos) |
+| `<stem>.speakers.json` | manual names of the speakers (chapter 4) |
+| `<stem>.json` | sidecar: the recording's metadata |
+| `<stem>_mix.wav` | the audio that was transcribed (mono 16 kHz) |
+
+Overview of everything: `recordingz list` (letters A = audio, V = speakers from video, T = transcript,
+S = summary).
+
+## 4. Naming the speakers
+
+Teams recordings with video get names automatically. Audio-only recordings keep `SPEAKER_00`, `SPEAKER_01`… Name them
+once:
+
+```
+recordingz label-speakers 2026-09-04_0900_supplier-meeting
+```
+
+For each speaker it shows how long they spoke and a sample sentence; you type the name. It is stored in
+`<stem>.speakers.json` and `.txt` and `.srt` are regenerated. Manual names always win.
+
+## 4a. Reviewing the speakers on the page (the recommended way)
+
+The desktop shortcut **recordingz – zkontrolovat mluvčí** (or `bin\recordingz-review-latest.cmd`, the command
+`recordingz review latest`, or a double click on the tray icon) opens a local page. It runs only on your PC
+(address 127.0.0.1) and sends nothing anywhere. The shortcut "zpracovat poslední" opens it by itself after processing
+when somebody in the recording is still unnamed.
+
+For each speaker the page shows: the label or name, how long they spoke, ▶ buttons with three voice samples, the two
+longest replies, the language they were transcribed in, and a hint from the minutes (role in the meeting, possibly a
+guess at the name with evidence). On the right are the fields first name, last name, nickname and the choice "v zápisu";
+below them a preview of how the person will appear in the transcript and the minutes. "vybrat známou osobu…" fills the
+fields from the registry, "stejná osoba jako…" copies them from another label in the same recording. The recording can
+be switched at the top.
+
+Saving creates a person in the registry (`_speakers\people.json`, the **Lidé** tab at the top), or adds the nickname and
+choice to a known person. What goes into the transcript and the minutes: first name, full name, or nickname. The default
+is `[people] display` (default `nick` = nickname, and the first name for whoever has none). The assignment in a
+recording points at the person, so a changed nickname or choice shows at the next export without assigning again.
+
+- Bottom left there is a flag: green "vše uloženo", orange "neuložené změny". Speakers recognised by voice or from the
+  video are already in the transcript and the minutes; only what you change on the page needs saving.
+- **Uložit** writes `<stem>.speakers.json` and regenerates `.txt` and `.srt`.
+- **Uložit a přegenerovat zápis…** saves the names and asks which minutes to write: this meeting's ones (each marked
+  *aktuální* or *zastaralý*, an outdated one preselected) or any other model; only that one is generated, the others
+  stay. A recording without a transcript has neither of these two buttons (no names to save yet): it is processed by
+  the panel's **Přepsat a zpracovat**, and its title saved by **Uložit** next to the title. The work runs on the
+  server: the page can be reloaded or closed meanwhile; "⏳ běží: …" at the bottom shows what runs and what waits.
+- **The meeting title** in the header can be edited (also right after recording, before the transcript): capture takes
+  it from the Teams window title, which is often "Připojení ke schůzce" or "Kompaktní zobrazení schůzky". Change and
+  save it: the recording's folder and all its files are renamed (new stem `date_time_new-title`), as are the sidecar,
+  the transcript header, the minutes' headings and the references in voice prints. In a terminal:
+  `recordingz rename <stem> "New title"`.
+- **Zavřít** stops the server (in the desktop window, closing the window does it). Closing the browser tab is enough
+  too: the server stops by itself within two minutes, never while a job runs or waits. Starting the shortcut again
+  creates no new page, it opens the running one.
+
+Actions that run long, delete or change things (regenerate or generate minutes, process, recognise by voice, merge,
+detach a meeting, delete) need a second click: the first one turns the button into "Potvrdit …" and the status line
+says what will happen; **Zrušit** or 6 seconds without a second click put it back.
+
+The **Lidé** tab: a click on "N · detail" in the Hlas column (or a double click on the row) opens a person's detail: in
+which recordings they are assigned and a table of the stored prints – from which recording and label, how long they
+spoke, when stored, ▶ a voice sample from that recording and ✕ to delete one print or all. Then the column
+"sloučit do…": when the same person exists twice (say once with only the first name from the microphone and once with
+the last name), merging rewrites the assignment in all recordings and carries over the nickname, aliases and prints
+(confirm with the button that appears). The same in a terminal: `recordingz people list` and
+`people merge <keep> <merge>`.
+
+Top left is the recording selector and next to it a **filter**: what you type narrows the list (case and diacritics do
+not matter; `team` finds "Team board" and "Team standup"). When the text is a valid regular expression it is used as
+one — `^team` only titles starting with team, `board|standup` both, `2026-09-2` by the date in the folder name. Each
+recording in the list shows how far it got: `✓ hotovo` (transcript and minutes, everybody named), `◐ bez zápisu`,
+`◐ 2 nepojmenovaných` (or both) and `○ bez přepisu`.
+
+The selector at the top is **Nahrávka** (the open recording); next to it **Název schůzky** with its own Uložit. Under it is the framed group **Filtry seznamu nahrávek**: they narrow what the Nahrávka selector offers. Folded, it shows the meetings and the states (with the count and ✕ smazat filtry next to the caption); the chip **▾ další filtry: hledat, datum** adds the text search and the dates (remembered). **Hledat:** takes text or a regular expression. **Podle názvu:** starts with `jednorázové` (meetings with a single recording), then a
+button for every meeting that repeats (with its count), the meeting with the newest recording first. **Podle stavu:** filters by processing: `◐ nezpracované` (something is still
+missing), `○ bez přepisu`, `? nepojmenované` (someone left unnamed), and `⏳ zpracovává se nebo ve frontě`. **Podle data:** `dnes`, `včera`, `týden` (this week, from Monday), `‹ týden` (last week), `měsíc`, `‹ měsíc`,
+`« starší` (before last month) – the small number is how many recordings fall there, the tooltip gives the full name
+and the dates – and 📅 od – do for any range (both days included); a button fills od – do with its range, so it can be
+adjusted. One click shows only those recordings and opens the newest; a second click clears the filter. The rows
+combine (a meeting, a state and a time); **✕ smazat filtry** next to the count "N z M" turns them all off at once. What does not fit the width scrolls sideways – drag the row with the mouse,
+or use the wheel. The text filter also finds dates: `2026-09-03`, `3.9.2026`, or a regexp such as `2026-09-0[34]`. Typing the filter opens its first
+match; only with unsaved changes the open recording stays in the list (marked as open, outside the filter).
+
+Top tabs: **Schůzka** (the selected recording), **Lidé (společné)**, **Nastavení** and **Nápověda**. Inside Schůzka
+are the sub-tabs **Mluvčí** (assigning names), **Přepis** (readable transcript with time and speaker) and **Zápis**
+(the minutes rendered from Markdown). The sub-tabs stay at the top while scrolling, and each keeps its own scroll
+position. Text is edited in the files; the page only shows it.
+
+**Zápis** has a tab per summary, named by the model that wrote it ("hlavní" = the configured model). Above them pick a
+model (Ollama on this PC, or Claude in the cloud) and **Vygenerovat zápis**: another model adds a tab, the same model
+rewrites its summary. **Přegenerovat** rewrites the open one. Tabs can be dragged to reorder; ✕ deletes that summary
+(after a second click). Minutes being written or waiting have a tab of their own, **⏳ ve frontě (n)**, listing each
+one with **Zastavit** / **Zrušit** (and **Zastavit všechny** when there are more); a new one opens that tab at once,
+and the minutes shown meanwhile say how many are on their way.
+
+Above the cards is the **Schůzka** panel: where the title comes from (calendar / Teams window / manual / file), which
+calendar meeting is linked and how surely ("podle názvu schůzky" is reliable, "jen podle času, ověřte" is a guess, for
+example an ad-hoc call during a scheduled meeting, or two meetings at once), and the participants with their source.
+Buttons: **Potvrdit spojení**, **Odpojit** (the calendar participants are removed, the title stays) and **spojit s
+jinou schůzkou** (offers Outlook meetings around that time; linking rewrites the title, the participants and the
+folder name). The organiser and the planned time from the calendar get into the minutes. When no meeting is linked, or
+one only by time, the panel lists the meetings that ran when the call started as buttons ("⚠ v tu dobu bylo v kalendáři
+víc schůzek – kterou to byla?"), the one with the same name first; one click (confirmed by a second) links it.
+
+When the selected recording has no transcript yet, the page offers its processing: a choice per step and the button
+"Přepsat a zpracovat" (transcript, export, minutes; see *Processing a recording* below).
+
+At the bottom is the server's latest event (what happened and when); **Historie** opens the whole list since the server
+started (a click outside it or Esc closes it). The server pushes its events to the page, so walk away from a
+transcription: when it is done it shows at the bottom and **the cards reload by themselves** — after regenerating you
+do not look at old names. With unsaved changes the page does not reload by itself (it would overwrite them); save and
+reload. While recordingz records, a red dot "Nahrávání probíhá · …" shows next to the status line.
+
+When a recording starts while a transcription or minutes are being generated, the recorded sound can break up (the
+GPU and CPU are busy). The setting "Když začne nahrávání a běží zpracování" decides: ask (a yellow-black warning tape
+in the middle of the window with **Přerušit náročné**, **Přerušit vše** and **Nechat běžet**; the desktop window
+also flashes in the taskbar; the heavy work stops after 10 s without an answer, or at once when no page is open), stop
+at once, or let it run. Only GPU work is stopped and held: minutes written in the cloud (Claude, OpenAI) go on and may
+even start during a recording, unless **Přerušit vše** was chosen. A stopped job goes back to the front of the queue
+and finishes by itself after the recording; a heavy job asked for during a recording waits for its end too (unless the
+setting is to let it run). The same tape says when the page has
+lost its server (open the review page again from the tray icon).
+
+**Nastavení → Kde se co zpracovává** lists every part of the processing with where it runs under the current settings
+(🖥 lokálně / ☁ cloud / — vypnuto) and which setting chooses it; parts without a setting (the Teams window names, the
+microphone, voice prints) are always local. With the defaults everything runs on this PC; a Claude entry in the
+comparison minutes makes the normal run a combination (the transcript text goes to Claude). The fast track is listed
+separately: both steps in the cloud, chosen per recording when processing it.
+
+**Processing a recording** has one button – **Přepsat a zpracovat** (and, folded under **↻ Přepsat znovu od
+nuly…** above the speakers of a transcribed one, **Přepsat znovu od nuly**) – and a choice for each step, in two columns: **🖥 Lokální** on the left (this PC, nothing leaves it) and
+**⚡ Rychlé** on the right (the cloud, the graphics card stays free). A column's heading picks the whole column; the
+heading of the column everything is in lights up (with the minutes off too).
+
+- **Přepis a mluvčí**: *lokálně* (WhisperX + pyannote on the graphics card) or *v cloudu* (ElevenLabs Scribe, or OpenAI:
+  the configured cloud service, else `[transcribe] cloud_provider` – transcription *and* diarization in one request,
+  the audio leaves the PC, no analysis of the Teams window videos). With the cloud, **doplnit mluvčí lokálně podle
+  hlasových otisků** adds the local voices right after (below).
+- **Zápis**: *lokálně* (Ollama), *v cloudu* (the configured cloud model, else Claude `[summarize] cloud_model`; the
+  transcript text leaves the PC) or *nevytvářet* (only the transcript and the subtitles; the minutes can be generated
+  any time later from ✎ Zápis ▾). Under it **srovnávací zápis** (only when Nastavení → Zápis → Porovnávací zápisy
+  lists some; ticked by itself with local minutes when Nastavení → Zápis → **Vytvářet alternativní zápis pro
+  porovnání** is on – the big cloud model is trusted) and **zápis hned, i když mluvčí
+  nebudou poznaní** (below).
+
+The defaults follow the settings (Přepis → Služba, Zápis → Služba and Dělat zápis); a cloud step without its key
+(Nastavení → Klíče API) is greyed out and says which key is missing. **Provede se: …** under the choices sums up what
+the run will do as chosen – where the transcript and the minutes are made, how long the graphics card is busy, what
+leaves the PC, the minutes now / when everyone is named / none, the comparison. The second click of the button
+confirms it and says what leaves the PC (or how long the graphics card will be busy). Both steps in the cloud is the
+former fast track: fast, and the graphics card stays quiet. Speakers are not recognised by voice prints then (the
+cloud returns no voice data); the microphone still names you.
+Afterwards, when you want the voices, **Doplnit hlasy lokálně** above the speakers of such a transcript runs only the
+local diarization (no new transcript, about a minute on the GPU): every group from the cloud gets the voice of the
+local voice it overlaps most, the speakers are recognised by voice prints, and confirmed names store prints as usual.
+The groups stay the cloud's; a group the local voices see as two people gets a hint to go through its replies.
+
+**⏱ Časy zpracování** above the speakers shows how long each part of the last jobs took – the Teams window
+analysis, the transcription with its own phases (model, speech, word alignment, diarization, language per speaker; or
+the cloud service), naming the speakers, the exports and each minutes – kept in `<stem>.timings.json` (the last 10
+jobs; derived, deletable). Information only.
+
+**Uložit jako…** in the Zápis tab saves a copy of the shown minutes into a folder (the Windows folder dialog opens, with an
+address bar and a box to type or paste a path; it may appear behind the window). The copy is named `<date> <time> <meeting> – zápis.md`, so copies sort by when the
+meeting was; nothing is overwritten. The folder is remembered by the meeting name (`<OUT_DIR>/_export_folders.json`),
+so the next meeting of the same name offers it, and **Uložit jako minule** saves there with one click.
+
+The Zápis bar has the model dropdown with its ☆ and two menus. **✎ Zápis ▾**: **Vygenerovat zápis** (by the chosen
+model), **Přegenerovat „…“** (the shown minutes by their own model; both ask for a second click, the menu stays open
+for it) and **📋 Prompt do schránky** (below). What is done with the shown minutes' file is in **📄 Soubor ▾**: **↗ Otevřít v …** opens it in the Markdown viewer, **Uložit jako
+minule** / **Uložit jako…** (above), **📋 Kopírovat cestu** puts the full path of the `.md` on the clipboard as text,
+**📎 Kopírovat soubor** puts the file itself there (like Ctrl+C in Explorer), so Ctrl+V attaches it to a mail or drops
+it into a folder. Which viewer opens minutes is set in Nastavení → Obecné → **Prohlížeč zápisů (.md)** (`[viewer] md`
+in recordingz.toml, the full path to the .exe, e.g. markdownz); empty = the app Windows opens `.md` files with, and the
+item names it. The Přepis tab has the same menu above the text (Otevřít – the default app for `.txt` –, Kopírovat
+cestu, Kopírovat soubor).
+
+**☆** next to the model dropdown makes the chosen model the one preselected there (and in the chooser after saving
+names) from now on; it then shows **★**. It is `[summarize] offer` (Nastavení → Zápis → Předvybraný model v Zápisu);
+the model of the automatic minutes after a transcription (Služba + Model) stays as it is.
+
+**📋 Prompt do schránky** (in ✎ Zápis ▾) is for writing the minutes by an agent, e.g. Claude Code: it copies
+`vygeneruj zápis modelem <provider:model chosen in the bar> v jazyce <cs> z přepisu souboru <…>.txt do souboru
+<…>.summary.<model>.md; postupuj podle skillu <…>\SKILL.md. Údaje o schůzce: …` with full paths. The skill
+`recordingz-zapis` is part of the installation (`src/recordingz/skills/recordingz-zapis/SKILL.md` in the
+installed suite): the same rules the app gives its own minutes models (seven sections, the Úkoly and Mluvčí tables,
+the first-line stamp that names the tab), so the agent's minutes look like the app's. It can also be copied into an
+agent's skills folder (e.g. `~/.claude/skills/recordingz-zapis/`) to be used by name. The file the prompt names is
+where this page looks for minutes by that model, never the main minutes.
+
+The page notices minutes written by another tool without polling or watching files: it looks once when the Přepis
+or Zápis tab opens and whenever the window comes back to the front; new minutes then open in their own tab.
+
+When the local minutes cannot be made – Ollama is not running, or its model folder does not have the model (e.g. after
+moving the folder in Ollama's settings) – the Zápis tab and Nastavení → Kde se co zpracovává say so in red, and a
+processing whose minutes failed ends in red ("…, ale část se nepodařila – …"). Ollama never downloads a model by itself;
+**Stáhnout <model>** in that red line downloads it as a queued job (it asks first – tens of GB; the progress shows in the
+job line at the bottom; it can be cancelled). For a 24 GB graphics card gemma4:31b is the measured choice.
+
+**Schůzka 1:1: <you> a …** (live calls with your microphone track and Nastavení → Obecné → your name): the other
+side is prefilled from the call window ("Marek Hudec | Microsoft Teams") or the only invited participant, and can be
+typed (the people already known are suggested; typing a name ticks it). Ticked, every longer voice the microphone did
+not take for you is that person after the transcript – also two groups the diarization split them into, also one the
+voice prints took for someone else – a confirmed name (a new person is created, the voice print stored when prints
+are on), so the minutes come right away. Not for calls where anyone else spoke. The Přepis tab of a recording without
+a transcript links to Mluvčí.
+
+Processing from the page (local and the fast track alike) writes the minutes only when every speaker who said at least
+20 s has a name; otherwise it stops after the transcript (the Zápis tab says why), you name the speakers and **Uložit a
+přegenerovat zápis** writes the minutes once – instead of minutes with SPEAKER_xx regenerated right after. **zápis hned,
+i když mluvčí nebudou poznaní** under Zápis asks for them anyway, wherever the transcript is made; the command line
+`process` always writes them. The cloud recognises nobody but you (the microphone track), so with a cloud transcript alone
+the minutes wait for names; **doplnit mluvčí lokálně podle hlasových otisků** adds the local voices right after the cloud
+transcript (one diarization pass on the graphics card, no transcription) and, when everyone is recognised by their
+voice prints, the minutes follow in the same job.
+
+Jobs run one at a time, in order. The recordings list starts their rows with `⏳ zpracovává se ·` or
+`⏳ ve frontě 2. ·` (coloured text). A transcribed recording that waits for **Přepsat znovu od nuly** stays exactly as
+it is until its turn – a slim line pinned above the tabs says where it is in the queue, the page can be read and
+edited, and cancelling loses nothing; the manual names, the window analysis and the voice prints this recording gave
+(only these – the people's prints from other meetings stay) are dropped only when the job starts. The prints come back
+from the new transcript when you save the names. A single print you do not trust is taken out without any new transcript
+in **Lidé (společné)** → the person → *Nepoužívat*.
+Once it runs, the page empties to the same "being processed" view as a new recording (Uložit is off), and the new
+transcript appears by itself when it is done. A recording without a transcript that waits in the queue shows its
+place ("Je ve frontě – 2. v pořadí") instead of the offer to transcribe it, with **Zpracovat jako další** (it moves right behind the running job) and
+**Zpracovat hned** (asks first: the running job stops, goes right behind this one and starts again from the
+beginning – what it had done is lost). **Zrušit zpracování** takes a waiting recording out of the queue at once; on the one being
+processed it asks first and stops it for good (its work so far is lost; the recording can be processed again).
+
+Speakers are the voice groups of the diarization: every card is one voice. The microphone, the voice prints and the
+Teams video only give names to whole groups, so it can happen that one person has two cards (diarization split them,
+for example a different microphone halfway through). A card then may say "hlasem podobná skupina: SPEAKER_04, shoda
+0.52" – listen to the samples of both, and **stejná osoba** fills in the same name; after Uložit the two groups merge.
+It is only a hint: two different people can score as much.
+
+When a card mixes voices (the samples are not all one person), open **Projít repliky (N)** on the card: every reply
+with ▶ and its text, and for each "ponechat", "→ <another speaker>", "→ nový mluvčí" (one new speaker for all replies
+sent there in one save) or "→ nepřiřazeno". **Uložit přesuny** moves them; the transcript and subtitles are rewritten.
+If the language line says "⚠ Přepis je bez zarovnání slov", the replies are long (around 30 s) and one reply can hold
+several voices – run Přepsat znovu od nuly first, then go through what is left.
+
+Keys: Enter = next speaker, Esc = stop playback. An empty name means keeping the label.
+
+A card's heading is the name the speaker got (it follows what you type), with the original label from the transcript
+next to it in grey – `SPEAKER_03`, or the name from the video's name label, even if OCR misread it.
+
+The diarization sometimes splits one person into two labels (a second microphone, a long meeting, re-joining). When
+you assign the same person to both, a **Sloučit podle osoby** button appears above the cards: the replies are joined
+under one label (the one with the most speech), and the voice samples of both are stored as prints if they differ
+enough – a recording of the same voice in other conditions is exactly what makes recognition reliable. Merging follows
+the saved assignment, so save first.
+
+A merge is written to the transcript (`merged_speakers`) and every moved reply remembers its original label, so
+**Vrátit sloučení** puts it back without a new transcript; for recordings merged earlier (without that information) only
+a new transcript helps.
+
+When the speaker assignment is completely mixed up (say two people ended up under one label), there is a **Přepsat
+znovu od nuly** button above the cards: a new transcript and diarization; the manual names of that recording are
+dropped (they are tied to labels that will not exist after the new transcript). It takes about as long as the first
+processing.
+
+A reply the diarization gave nobody (no speaker turn covered it, for example at the very start) is on the card
+**Nepřiřazeno**: each such reply with ▶ and a choice "komu patří…", or "přiřadit všechny…" for all at once, then
+**Uložit přiřazení**. If your microphone was active during such a reply, it is given to you automatically.
+
+A speaker with a few seconds of "speech" at the bottom of the list is often noise: mouse clicks, typing, breathing. The
+recogniser sometimes invents a whole sentence for it, even with terms from your domain (it has them in the prompt). The
+link "✕ smazat repliky tohoto mluvčího" under the name fields removes them from the transcript and the subtitles: the
+first click turns it red and waits for confirmation, the second deletes and saves at once (no further Uložit needed);
+regenerate the minutes if you want them without those replies. The deletion is recorded in the transcript
+(`removed_speakers`); `transcribe --force` brings the replies back. `label-speakers` in a terminal does the naming
+without audio.
+
+## 4b. The minutes
+
+`process` writes the minutes automatically (locally through Ollama, or through the Claude API, as configured). By hand
+or again:
+
+```
+recordingz summarize <stem>                 # in Czech, model from the configuration
+recordingz summarize <stem> --language en   # in English
+recordingz summarize <stem> --force         # overwrite the existing one
+recordingz summarize <stem> --provider anthropic --force   # once through Claude
+recordingz summarize <stem> --compare                       # also the minutes from `compare` in the configuration
+```
+
+To compare models set `compare = ["anthropic:claude-opus-5-5"]` (on the page: Nastavení → Zápis → Porovnávací zápisy):
+`process` then saves `<stem>.summary.claude-opus-5-5.md` next to the main `<stem>.summary.md` (local model), and so
+does regenerating the minutes. With **Vytvářet alternativní zápis pro porovnání** off (`compare_auto = false`) they
+are written only for a run where you tick **srovnávací zápis** on the page. Once you have decided, empty the list. Claude model ids use dashes (`claude-opus-5-5`), not dots.
+
+The minutes use names wherever the transcript knows them (from the Teams video, the microphone track or the page);
+unknown people stay `SPEAKER_XX` in the text. The last section **Mluvčí** is a table label / name / note: for unknown
+speakers the model describes their role in the meeting ("led the meeting, presented the build") and may add a guess at
+the name, always with evidence from the transcript ("probably Jan: addressed at 00:20:06 and answered"). Without
+evidence it gives no guess. So it pays to name the speakers first and then regenerate, or to read the minutes, assign
+names by the Mluvčí section and regenerate. Action items point at the time in the recording; they can be checked in the
+`.txt` or `.srt`. With Ollama everything stays on the PC. With the Claude API the transcript text goes to the cloud,
+never the audio or video. Minutes from the local model take about 2 to 3 minutes on an RTX 5090, and the GPU is busy
+meanwhile. Long meetings (roughly over 40 minutes of dense talk) are given to the local model in parts and the results
+merged, so the whole model fits into the graphics card's memory; otherwise the work spills over to the CPU and takes up
+to half an hour. A cloud model gets the whole transcript at once.
+
+## 5. Configuration
+
+The easiest way is the **Nastavení** button at the top right of the review page: every setting of the transcription,
+minutes, voice prints, retention and recording in one place, with a description and the default of each. Only what you
+changed is saved, and the comments in the file stay. The recording app picks up the changes by itself; only a new
+recordings folder applies after restarting the apps. Model fields are dropdowns marked "✓ v počítači" (on this PC),
+"↓ stáhne se" (downloaded on first use) or cloud; the Ollama and Claude lists are fetched when such a dropdown is
+opened, or with "Načíst aktuální modely pro výběr".
+
+At the top of Nastavení are the **API keys** (Claude, OpenAI, ElevenLabs). An entered key is stored encrypted in the
+Windows Credential Manager (only for your account, service `recordingz`) and applies at once. It cannot be shown again,
+only replaced or deleted. A key in an environment variable wins, so keys set with `setx` keep working. When you choose a
+cloud service without a key, the page says so.
+
+Underneath is the file `%APPDATA%\recordingz\recordingz.toml`. `recordingz config` shows the current values.
+
+```toml
+[recordings]
+out_dir = "D:/meetings"
+
+[transcribe]
+language = "auto"        # auto | cs | sk | en – detected among `languages`; can be forced for a mixed meeting
+model = "large-v3"       # the most accurate; large-v3-turbo is faster and worse at domain terms
+compute_type = "float16" # 8 GB VRAM and more; 4–6 GB: "int8_float16"
+batch_size = 16          # 4–8 on cards with less memory
+align = true             # word times; turn off on weak hardware
+diarize = true           # telling the speakers apart; turn off when the video is enough, or on weak hardware
+glossary = ["ORBIS", "SLA", "Kubernetes", "BPMN", "Entra ID"]   # your terms, abbreviations, product names
+
+[video]
+enabled = true
+fps = 2
+```
+
+**The glossary pays off.** Without it the model wrote the abbreviation ORBIS as "ORBYS" in 30 of 49 cases, with the
+glossary 0 times. Add the names of systems, projects and abbreviations that keep coming up in meetings.
+
+Every setting can be overridden once on the command line, e.g.
+`recordingz transcribe <stem> --language cs --no-diarize --force`.
+
+## 6. When something does not work
+
+| Symptom | Cause and fix |
+|---|---|
+| `ffmpeg/ffprobe not found` | ffmpeg is not on PATH. Use `bin\recordingz.cmd`, or set `RECORDINGZ_FFMPEG_DIR` to ffmpeg's `bin` folder. |
+| `CUDA is not available to torch` | An old NVIDIA driver (570+ needed), or a CPU torch got installed. Run `uv sync --extra all` again; check with `uv run python -c "import torch;print(torch.cuda.is_available())"`. |
+| `ollama: cannot reach` / `model not found` | Ollama is not running or the model is not pulled: `ollama pull gemma4:31b`. Transcript and export work without minutes too. |
+| the transcript is in a nonsense language | Language detection votes between the languages in `[transcribe] languages` (default cs, sk, en) on several loud stretches. The language can be forced: `transcribe <stem> --language sk --force`. |
+| `no valid Claude credentials` | Claude chosen without a key: enter it under Nastavení on the review page (or `RECORDINGZ_ANTHROPIC_API_KEY`). |
+| a comparison summary is missing | The model id is wrong (`claude-opus-5.5` instead of `claude-opus-5-5`); the error is in Historie. |
+| `GatedRepoError` / 403 for pyannote | The model's terms are not accepted or the login is missing. Installation step 3. |
+| Names from the video are garbled | OCR does not know diacritics. Give `--participants` when importing; names are matched by similarity. `recordingz video <stem> --participants "..."` repeats the analysis. |
+| The video gave no speakers | The recording has no Teams layout with name labels (another tool, shared content only). The diarization gives the speakers; name them by hand. |
+| The transcript exists and nothing happens | Finished recordings are skipped. `--force` overwrites. |
+| Little GPU memory | `compute_type = "int8_float16"`, `batch_size = 4`, possibly `align = false`. See `docs/hardware-portability.md`. |
+| The recorded sound breaks up during processing | Set "Když začne nahrávání a běží zpracování" to ask or stop (chapter 4a). |
+
+Detailed output: the switch `-v` before the command (`recordingz -v process`).
+
+## 7. Not there yet
+
+- Running without an NVIDIA GPU (CPU, Apple Silicon); see `docs/cross-platform-design.md` in the repository.
+- Full-text search in the transcripts.

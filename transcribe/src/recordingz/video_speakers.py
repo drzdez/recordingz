@@ -1,0 +1,244 @@
+"""Active-speaker timeline from a Teams meeting recording video.
+
+Teams highlights the active speaker's name label with its accent colour (~RGB 96,98,166) in the gallery, in the
+participant strip next to a shared screen and in the presenter label bottom-left. We sample frames, find
+accent-coloured label-sized blobs, cluster them by position, drop static clusters (shared-screen UI never toggles),
+OCR one representative frame per cluster, fuzzy-match to known participant names and merge into per-name intervals.
+
+Output (contract <stem>.speakers_video.json):
+  {"format": 1, "source": "teams-video", "fps": 2, "speakers": {"Name": [[start, end], ...]}}
+Returns None when no toggling label clusters are found (not a Teams layout / no labels visible).
+"""
+
+from __future__ import annotations
+
+import difflib
+import logging
+import re
+import subprocess
+from collections import defaultdict
+from dataclasses import dataclass
+from pathlib import Path
+
+import numpy as np
+
+from . import FORMAT_VERSION
+from .media import _bin
+
+log = logging.getLogger(__name__)
+
+W, H = 960, 540  # analysis resolution
+
+
+@dataclass
+class VideoTimeline:
+    fps: float
+    speakers: dict[str, list[list[float]]]
+    clusters: list[dict]
+
+    source: str = "teams-video"
+
+    def to_json(self) -> dict:
+        return {"format": FORMAT_VERSION, "source": self.source, "fps": self.fps,
+                "speakers": self.speakers, "clusters": self.clusters}
+
+    @classmethod
+    def from_json(cls, data: dict) -> "VideoTimeline":
+        return cls(fps=float(data.get("fps", 2)), speakers=data["speakers"], clusters=data.get("clusters", []))
+
+    def total_seconds(self, name: str) -> float:
+        return sum(e - s for s, e in self.speakers.get(name, []))
+
+    def shifted(self, offset: float) -> "VideoTimeline":
+        return VideoTimeline(fps=self.fps, clusters=self.clusters,
+                             speakers={n: [[round(s + offset, 2), round(e + offset, 2)] for s, e in iv]
+                                       for n, iv in self.speakers.items()})
+
+
+# ---------------------------------------------------------------- live Teams window (captured screen video)
+
+TILE_MIN_W, TILE_MIN_H = 150, 100  # at analysis resolution; a gallery tile is never smaller
+TILE_MAX_FILL = 0.25  # an outline is hollow; filled accent areas (buttons, calendar) are not tiles
+STATIC_TILE_FRACTION = 0.95  # a tile "speaking" in almost every frame is a spotlight/pin, not a speaker
+
+
+def _tile_outlines(img: np.ndarray) -> list[tuple[int, int, int, int]]:
+    """Active-speaker tiles in the live Teams gallery: the speaking tile gets a thin accent-coloured outline
+    (the recorded MP4 colours the name label instead). Returns tile boxes (x0, y0, x1, y1)."""
+    from scipy import ndimage
+    r, g, b = img[..., 0].astype(int), img[..., 1].astype(int), img[..., 2].astype(int)
+    mask = (b > 120) & (b - r > 35) & (b - g > 35) & (r > 60) & (r < 200)
+    mask = ndimage.binary_dilation(mask, iterations=2)  # joins the four thin sides into one hollow component
+    lab, _ = ndimage.label(mask)
+    boxes = []
+    for sl in ndimage.find_objects(lab):
+        y0, y1, x0, x1 = sl[0].start, sl[0].stop, sl[1].start, sl[1].stop
+        if x1 - x0 >= TILE_MIN_W and y1 - y0 >= TILE_MIN_H and mask[sl].mean() < TILE_MAX_FILL:
+            boxes.append((x0, y0, x1, y1))
+    return boxes
+
+
+def _tile_label_box(tile: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+    """Where the name label sits inside a tile: bottom-left corner."""
+    x0, y0, x1, y1 = tile
+    return (x0 + 4, max(y0, y1 - 28), x0 + min(240, int((x1 - x0) * 0.6)), y1 - 3)
+
+
+def analyze_screen(video: Path, *, fps: float = 2.0, names: list[str] | None = None,
+                   min_samples: int = 4, width: int = 1600, height: int = 900) -> VideoTimeline | None:
+    """Like analyze_video, for a Teams window captured live (`<stem>_screen<N>.mp4`)."""
+    step = 1.0 / fps
+    hits: dict[tuple[int, int], list[tuple[float, tuple]]] = defaultdict(list)
+    n = 0
+    for t, img in _frames(video, fps):
+        n += 1
+        for box in _tile_outlines(img):
+            hits[_cluster_key(box)].append((t, box))
+    log.info("screen: %d frames, %d raw tile clusters", n, len(hits))
+    hits = {k: v for k, v in hits.items() if len(v) >= min_samples and len(v) < STATIC_TILE_FRACTION * max(n, 1)}
+    if not hits:
+        log.info("screen: no active-speaker tile outlines found (no gallery visible?)")
+        return None
+
+    import easyocr
+    reader = easyocr.Reader(["cs", "en"], gpu=True, verbose=False)
+    known = names or []
+    clusters, by_name = [], defaultdict(set)
+    for key, lst in sorted(hits.items(), key=lambda kv: -len(kv[1])):
+        t_mid, tile_mid = lst[len(lst) // 2]
+        name = _normalize(_ocr_label(video, t_mid, _tile_label_box(tile_mid), reader, width, height), known)
+        clusters.append({"box": [int(v) for v in tile_mid], "samples": len(lst), "name": name})
+        for t, _ in lst:
+            by_name[name].add(round(t, 3))
+        log.info("screen: tile at %s x%d -> %s", tile_mid, len(lst), name)
+    speakers = {name: _merge(sorted(ts), step) for name, ts in by_name.items() if name != "?"}
+    tl = VideoTimeline(fps=fps, speakers=speakers, clusters=clusters)
+    tl.source = "teams-screen"
+    return tl
+
+
+def merge_timelines(parts: list[VideoTimeline], source: str = "teams-screen") -> VideoTimeline | None:
+    """Union of several timelines (one per captured Teams window): per name, overlapping or touching intervals
+    are merged. Used for live recordings where the gallery may sit in the meeting window, a pop-out, or both."""
+    parts = [p for p in parts if p is not None]
+    if not parts:
+        return None
+    speakers: dict[str, list[list[float]]] = {}
+    for p in parts:
+        for name, iv in p.speakers.items():
+            speakers.setdefault(name, []).extend(iv)
+    merged: dict[str, list[list[float]]] = {}
+    for name, iv in speakers.items():
+        out: list[list[float]] = []
+        for s, e in sorted(iv):
+            if out and s <= out[-1][1] + 0.01:
+                out[-1][1] = max(out[-1][1], e)
+            else:
+                out.append([s, e])
+        merged[name] = out
+    tl = VideoTimeline(fps=parts[0].fps, speakers=merged, clusters=[c for p in parts for c in p.clusters])
+    tl.source = source
+    return tl
+
+
+def _frames(video: Path, fps: float):
+    cmd = [_bin("ffmpeg"), "-loglevel", "error", "-i", str(video), "-vf", f"fps={fps},scale={W}:{H}",
+           "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, bufsize=W * H * 3 * 4)
+    n = W * H * 3
+    i = 0
+    try:
+        while True:
+            buf = p.stdout.read(n)
+            if len(buf) < n:
+                break
+            yield i / fps, np.frombuffer(buf, np.uint8).reshape(H, W, 3)
+            i += 1
+    finally:
+        p.stdout.close()
+        p.wait()
+
+
+def _accent_boxes(img: np.ndarray) -> list[tuple[int, int, int, int]]:
+    from scipy import ndimage
+    r, g, b = img[..., 0].astype(int), img[..., 1].astype(int), img[..., 2].astype(int)
+    mask = (b > 130) & (r > 60) & (r < 150) & (g > 60) & (g < 150) & (b - r > 40) & (b - g > 40)
+    lab, _ = ndimage.label(mask)
+    boxes = []
+    for sl in ndimage.find_objects(lab):
+        y0, y1, x0, x1 = sl[0].start, sl[0].stop, sl[1].start, sl[1].stop
+        h, w = y1 - y0, x1 - x0
+        if 6 <= h <= 24 and 20 <= w <= 200 and w > 1.8 * h and mask[sl].mean() > 0.45:
+            boxes.append((x0, y0, x1, y1))
+    return boxes
+
+
+def _cluster_key(box) -> tuple[int, int]:
+    return (round(box[0] / 12), round(box[1] / 12))
+
+
+def _merge(times: list[float], step: float, gap: float = 1.5) -> list[list[float]]:
+    out: list[list[float]] = []
+    for t in times:
+        if out and t - out[-1][1] <= gap:
+            out[-1][1] = t + step
+        else:
+            out.append([t, t + step])
+    return [[round(s, 2), round(e, 2)] for s, e in out]
+
+
+def _ocr_label(video: Path, t: float, box, reader, full_w: int, full_h: int) -> str:
+    raw = subprocess.run([_bin("ffmpeg"), "-loglevel", "error", "-ss", f"{t:.2f}", "-i", str(video),
+                          "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True).stdout
+    if len(raw) < full_w * full_h * 3:
+        return ""
+    img = np.frombuffer(raw, np.uint8).reshape(full_h, full_w, 3)
+    sx, sy = full_w / W, full_h / H
+    x0, y0, x1, y1 = int(box[0] * sx), int(box[1] * sy), int(box[2] * sx), int(box[3] * sy)
+    pad = 6
+    crop = img[max(0, y0 - pad):y1 + pad, max(0, x0 - pad):x1 + pad]
+    return " ".join(reader.readtext(crop, detail=0, paragraph=True)).strip()
+
+
+def _normalize(txt: str, known: list[str]) -> str:
+    txt = re.sub(r"[^\w' -]", "", txt).strip()
+    if known:
+        m = difflib.get_close_matches(txt, known, n=1, cutoff=0.6)
+        if m:
+            return m[0]
+    return txt or "?"
+
+
+def analyze_video(video: Path, *, fps: float = 2.0, names: list[str] | None = None,
+                  min_samples: int = 4, width: int = 1920, height: int = 1080) -> VideoTimeline | None:
+    step = 1.0 / fps
+    hits: dict[tuple[int, int], list[tuple[float, tuple]]] = defaultdict(list)
+    n = 0
+    for t, img in _frames(video, fps):
+        n += 1
+        for box in _accent_boxes(img):
+            hits[_cluster_key(box)].append((t, box))
+    log.info("video: %d frames, %d raw label clusters", n, len(hits))
+
+    def is_static(lst):
+        iv = _merge(sorted(t for t, _ in lst), step)
+        return len(iv) <= 2 and sum(e - s for s, e in iv) > 120
+
+    hits = {k: v for k, v in hits.items() if len(v) >= min_samples and not is_static(v)}
+    if not hits:
+        log.info("video: no toggling name labels found; not a Teams layout?")
+        return None
+
+    import easyocr
+    reader = easyocr.Reader(["cs", "en"], gpu=True, verbose=False)
+    known = names or []
+    clusters, by_name = [], defaultdict(set)
+    for key, lst in sorted(hits.items(), key=lambda kv: -len(kv[1])):
+        t_mid, box_mid = lst[len(lst) // 2]
+        name = _normalize(_ocr_label(video, t_mid, box_mid, reader, width, height), known)
+        clusters.append({"box": [int(v) for v in box_mid], "samples": len(lst), "name": name})
+        for t, _ in lst:
+            by_name[name].add(round(t, 3))
+        log.info("video: label at %s x%d -> %s", box_mid, len(lst), name)
+    speakers = {name: _merge(sorted(ts), step) for name, ts in by_name.items() if name != "?"}
+    return VideoTimeline(fps=fps, speakers=speakers, clusters=clusters)

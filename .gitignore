@@ -1,0 +1,41 @@
+# .NET (not transcribe/bin: the launchers of a source checkout)
+bin/
+!/transcribe/bin/
+obj/
+*.user
+*.suo
+.vs/
+TestResults/
+/artifacts/
+publish/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.ruff_cache/
+
+# Node, Rust (the review window, the page tests)
+node_modules/
+/review/src-tauri/target/
+/review/src-tauri/gen/
+
+# secrets & local
+.env
+*.log
+*.swp
+/recordings/
+/models/
+
+# lab experiments
+/transcribe/lab/.venv/
+/transcribe/lab/samples/
+/transcribe/lab/out/
+
+# IDE
+.idea/
+.vscode/
