@@ -3,7 +3,7 @@
 Notes for each release, newest first, written by hand for the people using it. The heading format is fixed
 (`## <version> – <date>`); a test keeps an entry for the current version.
 
-## 2.0.4 – 2026-10-16
+## 2.0.5 – 2026-10-16
 
 - **Test mikrofonu** (tray and Nastavení) judges speech the way the recording does, by the loudness of each half second
   instead of the loudest click: it says "slyší řeč", "jen šum, žádná řeč" (room noise only – speak during the test)

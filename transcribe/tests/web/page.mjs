@@ -15,13 +15,14 @@ export const BOARD_OLD = "2026-09-02_0900_team-board";  // transcribed
 
 export const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-/** wait until fn() is truthy; fails with `what` so a timeout says what never happened */
+/** wait until fn() is truthy; fails with `what` so a timeout says what never happened (a function: asked then, to add
+ * what the page shows instead) */
 export async function waitFor(fn, what, ms = 4000) {
   const until = Date.now() + ms;
   for (;;) {
     const v = fn();
     if (v) return v;
-    if (Date.now() > until) throw new Error(`timed out waiting for: ${what}`);
+    if (Date.now() > until) throw new Error(`timed out waiting for: ${typeof what === "function" ? what() : what}`);
     await sleep(20);
   }
 }

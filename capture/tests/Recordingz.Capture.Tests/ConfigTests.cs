@@ -224,13 +224,15 @@ public sealed class ConfigTests : IDisposable
     }
 
     [Fact]
-    public async Task A_save_waits_briefly_for_a_reader_that_holds_the_file()
+    public void A_save_waits_briefly_for_a_reader_that_holds_the_file()
     {
         var reader = new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);  // no delete sharing
-        var release = Task.Run(async () => { await Task.Delay(150); reader.Dispose(); });
+        // a thread of its own: a pool task can start late on a busy runner and outlast the retries (CI 2026-10-16)
+        var release = new Thread(() => { Thread.Sleep(150); reader.Dispose(); });
+        release.Start();
         const string toml = "[capture]\nonsite_mic = \"Pole\"\n";
-        TomlEditor.WriteAtomic(_path, toml);
-        await release;
+        TomlEditor.WriteAtomic(_path, toml, attempts: 100);  // up to 5 s; the reader goes after 150 ms
+        release.Join();
         Assert.Equal(toml, Text());
         Assert.Equal([_path], Directory.GetFiles(_dir));
 
