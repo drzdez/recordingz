@@ -45,8 +45,8 @@ public sealed class AppConfig
     /// window, web = the same page in the default browser.</summary>
     public string TrayOpen { get; set; } = "app";
 
-    /// <summary>[capture] review_app: recordingz-review.exe (the review window); empty = the
-    /// usual install place, %LOCALAPPDATA%\Programs\recordingz-review\recordingz-review.exe.</summary>
+    /// <summary>[capture] review_app: recordingz-review.exe (the review window); empty = the one next to
+    /// recordingz-capture.exe (where the MSI puts it), else %LOCALAPPDATA%\Programs\recordingz-review\.</summary>
     public string ReviewApp { get; set; } = "";
 
     /// <summary>[capture] update_check: once a day look for a newer release on GitHub and offer to install it.</summary>

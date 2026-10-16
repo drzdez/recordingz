@@ -190,9 +190,10 @@ WinGet ffmpeg is not on Git Bash's PATH; see `lab/README.md`.
 - `mic_speakers`: the diarization label that coincides with microphone activity becomes the user (`[user] name`)
 - `people.py`: registry `<OUT_DIR>/_speakers/people.json` (first, last, nick, per-person display override);
   `speakers.json` stores person ids, the display form is applied at export/summary time
-- `web/`: the review page. `review.py` = data functions + a stdlib HTTP server on 127.0.0.1 with a REST API and
-  Server-Sent Events (see "Review page API"; OpenAPI in `openapi.py`); `index.html` = one page of vanilla JS
-  (`@ts-check` + JSDoc types), no build step, no framework. Writes only `<stem>.speakers.json`, then regenerates exports and (on request) the summary.
+- `web/`: the review page. `review.py` = a stdlib HTTP server on 127.0.0.1 with a REST API and Server-Sent Events
+  (see "Review page API"; OpenAPI in `openapi.py`), calling the data functions in `views.py` (a recording) and
+  `people_views.py` (people, voice prints) and the job queue in `jobs.py`; `index.html` + `static/review.css` +
+  `static/review.js` = one page of vanilla JS (`@ts-check` + JSDoc types), no build step, no framework. Writes only `<stem>.speakers.json`, then regenerates exports and (on request) the summary.
 - `voiceprints.py`: the diarization embeddings (pyannote community-1 via whisperx `return_embeddings`) are stored
   under a person when a label gets a name (`_speakers/voiceprints.json`, max 10 per person, the user's own from
   the mic track); unnamed labels of new recordings are named when cosine similarity >= `[voiceprints] threshold`

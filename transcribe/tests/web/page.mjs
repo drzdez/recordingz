@@ -1,5 +1,6 @@
 // The review page (web/index.html) in jsdom, talking to a real review server. tests/test_web_page.py starts the
-// server on a prepared recordings folder and passes its address in RECORDINGZ_REVIEW_URL.
+// server on a prepared recordings folder and passes its address in RECORDINGZ_REVIEW_URL. The page's stylesheet and
+// script (web/static/) come from that server, as in a browser.
 import { readFileSync } from "node:fs";
 import { JSDOM, VirtualConsole } from "jsdom";
 
@@ -91,7 +92,7 @@ export async function openPage(t, stem = "", { desktop = false, query = "" } = {
   const vc = new VirtualConsole();
   vc.on("jsdomError", e => errors.push(e.message));
   const dom = new JSDOM(HTML, {
-    runScripts: "dangerously", url: `${BASE}/${desktop || query ? "?" + [desktop ? "app=desktop" : "", query].filter(Boolean).join("&") : ""}${stem ? "#" + stem : ""}`, virtualConsole: vc,
+    runScripts: "dangerously", resources: "usable", url: `${BASE}/${desktop || query ? "?" + [desktop ? "app=desktop" : "", query].filter(Boolean).join("&") : ""}${stem ? "#" + stem : ""}`, virtualConsole: vc,
     beforeParse(window) {
       window.fetch = (url, init) => {
         requests.push(`${(init && init.method) || "GET"} ${url}`);

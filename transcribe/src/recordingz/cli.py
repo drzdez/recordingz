@@ -275,7 +275,7 @@ def people_list(ctx: typer.Context):
 def people_merge(ctx: typer.Context, keep: str = typer.Argument(..., help="person id to keep"),
                  drop: str = typer.Argument(..., help="person id to fold into it")):
     """Merge two entries of the same person; rewrites their assignments in every recording."""
-    from .web.review import merge_people
+    from .web.people_views import merge_people
     cfg = _cfg(ctx)
     merge_people(cfg, keep, drop)
     typer.echo(f"merged {drop} into {keep}")
@@ -303,7 +303,8 @@ def review(ctx: typer.Context, target: str = typer.Argument("latest", help="stem
                                                 help="do nothing when every speaker already has a name")):
     """Open the local review page: listen to each speaker, type the name, save, regenerate exports and summary."""
     from .pipeline import resolve_target
-    from .web.review import serve, unresolved_labels
+    from .web.review import serve
+    from .web.views import unresolved_labels
     cfg = _cfg(ctx)
     rec = resolve_target(cfg, target, allow_import=False)
     if only_unresolved and rec.transcript_path.exists() and not unresolved_labels(rec):
@@ -315,7 +316,7 @@ def review(ctx: typer.Context, target: str = typer.Argument("latest", help="stem
 @app.command()
 @_errors
 def summarize(ctx: typer.Context, target: str,
-              provider: Optional[str] = typer.Option(None, help="ollama | anthropic"),
+              provider: Optional[str] = typer.Option(None, help="ollama | anthropic | openai"),
               model: Optional[str] = typer.Option(None, help="ollama tag or Claude model id"),
               language: Optional[str] = typer.Option(None, help="language of the minutes, e.g. cs, en"),
               compare: bool = typer.Option(False, "--compare", help="also run the `compare` providers from the config"),

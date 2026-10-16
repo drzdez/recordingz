@@ -13,7 +13,7 @@ import pytest
 
 from recordingz.people import People
 from recordingz.recording import Recording
-from test_core import _make_recording, _make_transcribed, _serve
+from helpers import _make_recording, _make_transcribed, _serve
 
 WEB = Path(__file__).parent / "web"
 NODE = shutil.which("node")
@@ -70,7 +70,9 @@ def _fake_process(cfg, rec: Recording, force: bool = False) -> None:
 @pytest.mark.parametrize("script", sorted(p.name for p in WEB.glob("*.test.mjs")))
 def test_review_page(script, tmp_path, monkeypatch):
     from recordingz import pipeline, settings
-    from recordingz.web import review
+    from recordingz.config import Config
+    from recordingz.recording import find_recording
+    from recordingz.web import jobs, views
     from test_settings import TOML, FakeVault
     _folder(tmp_path)
     # the settings page edits a throw-away config and a fake key vault, never the real ones
@@ -98,11 +100,8 @@ def test_review_page(script, tmp_path, monkeypatch):
     for secret in settings.SECRETS.values():
         for var in secret.env:
             monkeypatch.delenv(var, raising=False)
-    monkeypatch.setattr(review, "do_process", _fake_process)
-    monkeypatch.setattr(review, "_launch", lambda argv, path: None)  # no viewer opens in a test
-    monkeypatch.setattr(review, "_clip_file", lambda path: None)  # and the real clipboard stays as it is
-    monkeypatch.setattr(review, "do_summarize", lambda cfg, rec, force=False: time.sleep(1.0))
-    monkeypatch.setattr(review, "do_summarize_compare", lambda cfg, rec, force=False: [])
+    monkeypatch.setattr(views, "_launch", lambda argv, path: None)  # no viewer opens in a test
+    monkeypatch.setattr(views, "_clip_file", lambda path: None)  # and the real clipboard stays as it is
 
     def fake_summarize_as(cfg, rec, provider, model):
         time.sleep(0.3)
@@ -110,11 +109,10 @@ def test_review_page(script, tmp_path, monkeypatch):
         stamp = f"<!-- recordingz summary | {provider}: {model} | created: 2026-09-30T10:00:00 -->"
         path.write_text(stamp + "\n# Zápis od " + model + "\n\nText.\n", encoding="utf-8")
         return path
-    monkeypatch.setattr(review, "summarize_as", fake_summarize_as)
 
     def fake_run_cli(argv, on_proc, on_line):  # the jobs' child process, played by the fakes above
         args = argv[argv.index("run-job") + 1:]
-        cfg = review.Config(out_dir=tmp_path)
+        cfg = Config(out_dir=tmp_path)
         if args[0] == "replies":  # the replies' voices: a unit vector per reply instead of the GPU model
             from recordingz import replies
             for r in replies.recordings_of(cfg, args[1]):
@@ -122,18 +120,18 @@ def test_review_page(script, tmp_path, monkeypatch):
                 replies.cache_path(r).write_text(json.dumps({"format": 1, "model": cfg.transcribe.diarize_model,
                                                              "replies": vecs}), encoding="utf-8")
             return
-        rec = review.find_recording(args[1], tmp_path)
+        rec = find_recording(args[1], tmp_path)
         if args[0] == "process":
-            review.do_process(cfg, rec, force="--force" in args)
+            _fake_process(cfg, rec, force="--force" in args)
         elif args[0] == "summary":
-            review.do_summarize(cfg, rec, force=True)
+            time.sleep(1.0)
         else:
-            review.summarize_as(cfg, rec, args[args.index("--provider") + 1], args[args.index("--model") + 1])
-    monkeypatch.setattr(review, "run_cli", fake_run_cli)
+            fake_summarize_as(cfg, rec, args[args.index("--provider") + 1], args[args.index("--model") + 1])
+    monkeypatch.setattr(jobs, "run_cli", fake_run_cli)
     srv, state, base = _serve(tmp_path)
     capture_file = tmp_path / "recordingz-capture.json"  # the test's own capture status, never the real one
     stop = threading.Event()
-    threading.Thread(target=review._capture_watch, args=(state, capture_file, 0.1, stop), daemon=True).start()
+    threading.Thread(target=jobs._capture_watch, args=(state, capture_file, 0.1, stop), daemon=True).start()
     try:
         run = subprocess.run([NODE, "--test", "--test-reporter=spec", str(WEB / script)], cwd=WEB,
                              env={**os.environ, "RECORDINGZ_REVIEW_URL": base, "RECORDINGZ_TEST_CONFIG": str(cfg_file),

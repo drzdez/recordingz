@@ -148,7 +148,7 @@ def test_cloud_providers_and_claude_use_the_stored_key(vault):
 
 
 def test_settings_over_http(tmp_path, cfg_file, vault):
-    from test_core import _call, _serve
+    from helpers import _call, _serve
     srv, state, base = _serve(tmp_path)
     try:
         assert state.settings_path == cfg_file
