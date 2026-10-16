@@ -37,6 +37,7 @@ public sealed class WatchdogTests
         public double LastMicLoud { get; set; }
         public double LastMicAlive { get; set; }
         public double? LastMicData { get; set; }
+        public double? LastMicSpeech { get; set; }
         public bool MicOnly { get; set; }
         public bool WithMic { get; set; } = true;
         public int Reopens { get; set; }
@@ -307,5 +308,132 @@ public sealed class WatchdogTests
         Assert.Equal(0, rec.ReopenCalls);
         Assert.Empty(notes.Notes);
         Assert.Null(wd.Warned);
+    }
+
+    // ------------------------------------------------------------------ on-site silence (2026-10-12)
+    private static (WdFakeClock Clock, WdFakeNotifier Notes, WdFakeRec Rec, OnsiteSilence Silence) Onsite()
+    {
+        var clock = new WdFakeClock();
+        var notes = new WdFakeNotifier();
+        var rec = new WdFakeRec(clock) { MicOnly = true };
+        return (clock, notes, rec, new OnsiteSilence(clock, notes));
+    }
+
+    [Fact]
+    public void Onsite_no_speech_is_warned_once_after_three_minutes()
+    {
+        var (clock, notes, rec, silence) = Onsite();
+        double start = clock.Seconds;
+        double Elapsed() => clock.Seconds - start;
+        clock.Advance(OnsiteSilence.NoSpeechWarnS - 3);
+        Assert.Null(silence.Tick(rec, Elapsed(), 10, micWarned: false));
+        Assert.Empty(notes.Notes);
+        clock.Advance(3);
+        silence.Tick(rec, Elapsed(), 10, micWarned: false);
+        Assert.Single(notes.Notes);
+        Assert.Contains("mikrofon zatím nic neslyší", notes.Notes[0]);
+        Assert.Equal(1, notes.Beeps);
+        clock.Advance(60);
+        silence.Tick(rec, Elapsed(), 10, micWarned: false);
+        Assert.Single(notes.Notes);
+    }
+
+    [Fact]
+    public void Onsite_speech_or_a_dead_mic_alarm_means_no_no_speech_warning()
+    {
+        var (clock, notes, rec, silence) = Onsite();
+        rec.LastMicSpeech = clock.Seconds + 30;
+        clock.Advance(240);
+        silence.Tick(rec, 240, 10, micWarned: false);
+        Assert.Empty(notes.Notes);
+
+        var (clock2, notes2, rec2, silence2) = Onsite();
+        clock2.Advance(240);
+        silence2.Tick(rec2, 240, 10, micWarned: true);  // the watchdog already says the mic is dead
+        Assert.Empty(notes2.Notes);
+        Assert.Equal(0, notes2.Beeps);
+    }
+
+    [Fact]
+    public void Onsite_silence_asks_after_ten_minutes_once_and_counts_from_the_last_speech()
+    {
+        var (clock, _, rec, silence) = Onsite();
+        double start = clock.Seconds;
+        rec.LastMicSpeech = start + 120;  // they spoke for two minutes, then went
+        clock.Advance(120 + 600 - 3);
+        Assert.Null(silence.Tick(rec, clock.Seconds - start, 10, false));
+        clock.Advance(3);
+        var prompt = silence.Tick(rec, clock.Seconds - start, 10, false);
+        Assert.NotNull(prompt);
+        Assert.Equal(120, prompt!.SilentSinceS, 3);
+        Assert.Equal(10, prompt.SilentMin, 3);
+        Assert.Contains("Schůzka ještě běží?", OnsiteSilence.PromptText(prompt.SilentMin));
+        clock.Advance(30);
+        Assert.Null(silence.Tick(rec, clock.Seconds - start, 10, false));  // the box is open: not asked twice
+    }
+
+    [Fact]
+    public void Onsite_yes_rearms_the_silence_timer()
+    {
+        var (clock, _, rec, silence) = Onsite();
+        double start = clock.Seconds;
+        clock.Advance(600);
+        var prompt = silence.Tick(rec, clock.Seconds - start, 10, false)!;
+        clock.Advance(20);
+        Assert.False(silence.Answer(prompt, true));
+        clock.Advance(600 - 3);
+        Assert.Null(silence.Tick(rec, clock.Seconds - start, 10, false));
+        clock.Advance(3);
+        Assert.NotNull(silence.Tick(rec, clock.Seconds - start, 10, false));
+    }
+
+    [Fact]
+    public void Onsite_no_or_no_answer_stops()
+    {
+        var (clock, _, rec, silence) = Onsite();
+        clock.Advance(600);
+        Assert.True(silence.Answer(silence.Tick(rec, 600, 10, false)!, false));
+
+        var (clock2, _, rec2, silence2) = Onsite();
+        clock2.Advance(600);
+        var prompt = silence2.Tick(rec2, 600, 10, false)!;
+        clock2.Advance(OnsiteSilence.AskTimeoutS);
+        Assert.True(silence2.Answer(prompt, null));  // the box timed out
+    }
+
+    [Fact]
+    public void Onsite_a_box_that_never_showed_keeps_recording()
+    {
+        var (clock, _, rec, silence) = Onsite();
+        clock.Advance(600);
+        var prompt = silence.Tick(rec, 600, 10, false)!;
+        clock.Advance(1);
+        Assert.False(silence.Answer(prompt, null));  // back unanswered at once: it failed, not timed out
+        clock.Advance(60);
+        Assert.Null(silence.Tick(rec, 661, 10, false));  // and the silence counts anew
+    }
+
+    [Fact]
+    public void Onsite_silence_prompt_is_off_with_zero_and_never_for_live_recordings()
+    {
+        var (clock, _, rec, silence) = Onsite();
+        clock.Advance(3600);
+        Assert.Null(silence.Tick(rec, 3600, 0, false));
+
+        var live = new WdFakeRec(clock);  // MicOnly = false: a call, manual or playback recording
+        var liveSilence = new OnsiteSilence(clock, new WdFakeNotifier());
+        clock.Advance(3600);
+        Assert.Null(liveSilence.Tick(live, 7200, 10, false));
+    }
+
+    [Fact]
+    public void Onsite_answer_to_the_previous_recording_is_ignored()
+    {
+        var (clock, _, rec, silence) = Onsite();
+        clock.Advance(600);
+        var prompt = silence.Tick(rec, 600, 10, false)!;
+        silence.Reset();  // a new recording started meanwhile
+        clock.Advance(OnsiteSilence.AskTimeoutS);
+        Assert.False(silence.Answer(prompt, false));
     }
 }

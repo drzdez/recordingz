@@ -94,8 +94,8 @@ public sealed class ConfigTests : IDisposable
     {
         var v = SettingsModel.Values(new AppConfig());
         Assert.Equal(
-            new[] { "calendar_outlook", "device_missing", "onsite_mic", "onsite_offer", "onsite_upgrade",
-                    "other_apps", "prompt_default", "user_name" },
+            new[] { "calendar_outlook", "device_missing", "onsite_mic", "onsite_offer", "onsite_silence_min",
+                    "onsite_upgrade", "other_apps", "prompt_default", "user_name" },
             v.Keys.OrderBy(k => k, StringComparer.Ordinal).ToArray());
     }
 
@@ -142,6 +142,36 @@ public sealed class ConfigTests : IDisposable
         Assert.StartsWith("onsite_", lines[rec - 2].Split(' ')[0]);
         Assert.True(Array.IndexOf(lines, "[capture]") < Array.IndexOf(lines, "device_missing = \"fail\""));
         Assert.True(Array.IndexOf(lines, "device_missing = \"fail\"") < rec);
+    }
+
+    [Fact]
+    public void Onsite_silence_minutes_are_saved_as_a_number_and_checked()
+    {
+        var cfg = AppConfig.Load(_path);
+        Assert.Equal(10, cfg.OnsiteSilenceMin);
+        Assert.Equal(new[] { "onsite_silence_min" },
+                     SettingsModel.Save(_path, cfg, new JsonObject { ["onsite_silence_min"] = "15" }));
+        Assert.Equal(15, cfg.OnsiteSilenceMin);
+        Assert.Equal(15L, Convert.ToInt64(Tbl(Parsed(), "capture")["onsite_silence_min"]));
+        Assert.Equal(15, AppConfig.Load(_path).OnsiteSilenceMin);
+        SettingsModel.Save(_path, cfg, new JsonObject { ["onsite_silence_min"] = 0 });
+        Assert.Equal(0, AppConfig.Load(_path).OnsiteSilenceMin);
+        foreach (var bad in new JsonNode?[] { "", "deset", -1, 2.5, 241 })
+            Assert.Throws<ArgumentException>(() =>
+                SettingsModel.Save(_path, cfg, new JsonObject { ["onsite_silence_min"] = bad }));
+        Assert.Equal(0, cfg.OnsiteSilenceMin);
+    }
+
+    [Fact]
+    public void Onsite_silence_minutes_in_the_toml_are_read_leniently()
+    {
+        Assert.Equal(10, AppConfig.Minutes(null, 10));
+        Assert.Equal(10, AppConfig.Minutes("never", 10));
+        Assert.Equal(7, AppConfig.Minutes(7L, 10));
+        Assert.Equal(8, AppConfig.Minutes(7.6, 10));
+        Assert.Equal(5, AppConfig.Minutes(" 5 ", 10));
+        Assert.Equal(0, AppConfig.Minutes(-3L, 10));
+        Assert.Equal(AppConfig.MaxMinutes, AppConfig.Minutes(100000L, 10));
     }
 
     [Fact]

@@ -116,6 +116,94 @@ def test_invented_replies_are_recognised():
                                 level_db=-40.0, median_db=-26.6), "long replies are speech even when quiet"
 
 
+# 2026-10-12, an on-site recording that heard only room noise (names and title replaced): every reply is the prompt
+ECHOES = [(131.15, 143.78, "Pojmy Nováková."), (143.80, 144.26, "Pojmy Nováková."), (3185.56, 3188.26, "Pojmy Nováková."),
+          (3935.75, 3964.62, "Jana Nováková."), (3964.66, 3965.10, "Pojmy Nováková."),
+          (3976.58, 3983.20, "Příprava na sprint."), (3983.24, 3987.37, "Účastníci."), (4040.62, 4045.28, "Jana Nováková.")]
+
+
+def _silent_recording(tmp_path):
+    rec = _make_transcribed(tmp_path)
+    rec.sidecar.update(title="Příprava na sprint", participants=[{"name": "Jana Nováková"}], source="onsite")
+    rec.save_sidecar()
+    return rec
+
+
+def test_replies_echoing_the_prompt_are_recognised():
+    from recordingz.prompt import is_prompt_echo
+    args = ("Příprava na sprint", ["Jana Nováková", "Petr Svoboda"], ("ATLAS", "SLA", "Entra ID"))
+    for _, _, echo in ECHOES:
+        assert is_prompt_echo(echo, *args), echo
+    for echo in ("pojmy novakova", "Účastníci: Jana Nováková, Petr Svoboda.", "Pojmy: ATLAS, SLA, Entra ID.",
+                 "Schůzka: Příprava na sprint.", "Svoboda.", "ATLAS", "Pojmy Entra ID"):
+        assert is_prompt_echo(echo, *args), echo
+    for real in ("Jano, pošli to.", "Petr Svoboda to má hotové.", "ATLAS je dole.", "Na.", "Sprint.",
+                 "Ano.", "Příprava na sprint začne v pondělí.", ""):
+        assert not is_prompt_echo(real, *args), real
+
+
+def test_transcript_of_prompt_echoes_only_says_there_is_no_speech(tmp_path, monkeypatch):
+    from recordingz import pipeline as pl
+    from recordingz.export import NO_SPEECH
+    from recordingz.providers.base import ProviderResult
+    from recordingz.web.views import build_review
+    cfg = Config(out_dir=tmp_path, transcribe=TranscribeSettings(glossary=("ATLAS", "SLA")))
+    rec = _silent_recording(tmp_path)
+
+    class P:
+        name = "fake"
+
+        def transcribe(self, audio, **k):
+            assert "Pojmy: ATLAS, SLA." in k["prompt"]
+            return ProviderResult(segments=[Segment(a, b, t, "SPEAKER_00") for a, b, t in ECHOES], language="cs",
+                                  provider="fake", provider_version="0", model="m",
+                                  speaker_embeddings={"SPEAKER_00": [1.0, 0.0]})
+    monkeypatch.setattr(pl, "get_provider", lambda name: P())
+    pl.do_transcribe(cfg, rec, force=True)
+    data = rec.read_json(rec.transcript_path)
+    assert data["no_speech"] is True and data["segments"] == [] and data["speakers"] == []
+    assert data["speaker_embeddings"] == {}, "no voice left to name"
+    pl.do_export(cfg, rec)
+    txt = rec.file(".txt").read_text(encoding="utf-8")
+    assert NO_SPEECH in txt and "SPEAKER_00" not in txt and "speakers: \n" in txt
+    assert NO_SPEECH in rec.file(".srt").read_text(encoding="utf-8")
+    review = build_review(cfg, rec)
+    assert review["transcribed"] and review["speakers"] == []
+
+
+def test_real_speech_with_names_survives_the_echo_filter(tmp_path, monkeypatch):
+    from recordingz import pipeline as pl
+    from recordingz.providers.base import ProviderResult
+    cfg = Config(out_dir=tmp_path)
+    rec = _silent_recording(tmp_path)
+    segs = [Segment(0, 3, "Jano, pošli to prosím.", "SPEAKER_00"), Segment(3, 4, "Účastníci.", "SPEAKER_01")]
+
+    class P:
+        name = "fake"
+
+        def transcribe(self, audio, **k):
+            return ProviderResult(segments=list(segs), language="cs", provider="fake", provider_version="0", model="m")
+    monkeypatch.setattr(pl, "get_provider", lambda name: P())
+    pl.do_transcribe(cfg, rec, force=True)
+    data = rec.read_json(rec.transcript_path)
+    assert [s["text"] for s in data["segments"]] == ["Jano, pošli to prosím."] and data["speakers"] == ["SPEAKER_00"]
+    assert "no_speech" not in data
+
+
+def test_summary_refuses_a_transcript_without_speech(tmp_path, monkeypatch):
+    from recordingz import pipeline as pl
+    from recordingz import summarize as sm
+    cfg = Config(out_dir=tmp_path)
+    rec = _silent_recording(tmp_path)
+    rec.write_json(rec.transcript_path, {"format": 1, "language": "cs", "speakers": [], "segments": [],
+                                         "no_speech": True})
+    monkeypatch.setattr(sm, "summarize", lambda *a, **k: pytest.fail("no LLM call on an empty transcript"))
+    with pytest.raises(RecordingError, match="no recognisable speech"):
+        pl.do_summarize(cfg, rec, force=True)
+    with pytest.raises(RecordingError, match="no recognisable speech"):
+        pl.summarize_as(cfg, rec, "ollama", "m")
+
+
 def test_speaker_language_choice():
     from recordingz.providers.whisperx_provider import choose_speaker_languages
     votes = {"SPEAKER_00": [{"sk": .7, "cs": .25}], "SPEAKER_01": [{"cs": 1.0}, {"cs": .9, "sk": .1}],

@@ -111,10 +111,19 @@
       <option value="user-guide">Uživatelská příručka</option>
       <option value="install">Instalace a konfigurace</option>
       <option value="privacy">Soukromí a hlasové otisky</option>
+      <option value="about">O aplikaci a co je nového</option>
     </select>
     <button id="helpClose" type="button" class="play">✕ Zavřít (Esc)</button>
   </div>
   <main id="helpMain" class="doc"></main>
+</div>
+<div id="whatsNew" hidden role="dialog" aria-labelledby="whatsNewTitle">
+  <div class="whatsNewBar">
+    <strong id="whatsNewTitle">Co je nového</strong>
+    <button id="whatsNewAll" type="button" class="play" title="Nápověda → O aplikaci: všechna vydání">Všechny změny</button>
+    <button id="whatsNewClose" type="button" class="primary-btn">Rozumím</button>
+  </div>
+  <main id="whatsNewMain" class="doc"></main>
 </div>
 <audio id="audio"></audio>
 

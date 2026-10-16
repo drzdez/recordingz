@@ -199,6 +199,7 @@ public sealed class MonitorLoop : IDisposable
     private readonly IClock _clock;
     private readonly INotifier _notifier;
     private readonly Watchdog _watchdog;
+    private readonly OnsiteSilence _silence;
     private readonly Finalizer _finalizer;
     private readonly object _lock = new();
     private readonly ManualResetEventSlim _quit = new(false);
@@ -239,6 +240,7 @@ public sealed class MonitorLoop : IDisposable
         _notifier = notifier;
         _watchdog = new Watchdog(clock, notifier);
         _watchdog.Changed += Refresh;  // the icon turns yellow / red again right away
+        _silence = new OnsiteSilence(clock, notifier);
         _finalizer = new Finalizer((at, title) => Outlook.Meeting(_cfg.UseOutlook, at, title), notifier, clock);
     }
 
@@ -374,7 +376,9 @@ public sealed class MonitorLoop : IDisposable
         {
             if (_cfg.OnsiteUpgrade && inCall)
                 UpgradeToLive();
-            // otherwise it ends via the tray (Stop & keep) or the safety cap
+            // otherwise it ends via the tray (Stop & keep), a long silence nobody confirms, or the safety cap
+            else if (_silence.Tick(rec, elapsed, _cfg.OnsiteSilenceMin, _watchdog.Warned is not null) is { } prompt)
+                AskSilenceInBackground(rec, prompt);
         }
         else if (!_manual)
         {
@@ -621,6 +625,19 @@ public sealed class MonitorLoop : IDisposable
             Stop("aborted");
         })) { IsBackground = true }.Start();
 
+    /// <summary>"Is the meeting still running?" after a long on-site silence, in its own thread so the loop keeps
+    /// ticking; "Ne" or no answer within OnsiteSilence.AskTimeoutS stops and keeps the recording.</summary>
+    private void AskSilenceInBackground(Recorder rec, SilencePrompt prompt) =>
+        new Thread(() => Guard("silence box", () =>
+        {
+            var choice = Dialogs.AskYesNo(OnsiteSilence.PromptText(prompt.SilentMin), OnsiteSilence.AskTimeoutS,
+                                          defaultYes: true);
+            bool same;
+            lock (_lock) same = ReferenceEquals(_rec, rec);
+            if (same && _silence.Answer(prompt, choice))
+                Stop("silence");
+        })) { IsBackground = true }.Start();
+
     // ------------------------------------------------------------------ start / stop
     /// <summary>Start a recording; returns it, or null when one runs already or the start failed (the user is
     /// told loudly: a meeting that silently is not recorded is the worst outcome).</summary>
@@ -667,6 +684,7 @@ public sealed class MonitorLoop : IDisposable
                     _continues = null;
                     _callApp = callApp;
                     _watchdog.Reset();
+                    _silence.Reset();
                     _calendar = null;  // looked up below, outside the lock (Outlook COM can take seconds)
                     (_title, _titleSource) = AppLogic.ResolveTitle(title, manual, null);
                     _screen = screen;

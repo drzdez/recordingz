@@ -22,7 +22,7 @@
   .field:last-child { margin-bottom: 0; }
   label.name { display: block; margin-bottom: 4px; }
   .hint { color: var(--dim); font-size: 13px; margin-top: 4px; }
-  select, input[type=text] { width: 100%; padding: 7px 9px; background: #111316; color: var(--fg);
+  select, input[type=text], input[type=number] { width: 100%; padding: 7px 9px; background: #111316; color: var(--fg);
             border: 1px solid var(--line); border-radius: 6px; font: inherit; }
   select:disabled, input:disabled { color: var(--dim); }
   .radios { display: flex; flex-direction: column; gap: 6px; }
@@ -83,6 +83,12 @@
         <span>Když během nahrávání na místě začne hovor v Teams, přejít na živý záznam
           <span class="hint" style="display:block">On-site nahrávka se ukončí a hned začne živá (zvuk systému + mikrofon);
             v sidecaru se obě propojí polem <code>continues</code>.</span></span></label>
+    </div>
+    <div class="field">
+      <label class="name" for="onsite_silence_min">Zeptat se „Schůzka ještě běží?“ po tolika minutách ticha</label>
+      <input type="number" id="onsite_silence_min" min="0" max="240" step="1" style="width:8em">
+      <div class="hint">Když mikrofon tak dlouho neslyší řeč, objeví se dotaz; bez odpovědi do 5 minut se nahrávka
+        ukončí a uloží. 0 = nikdy se neptat (nahrávka pak běží do Stop &amp; keep, nejdéle 4 hodiny).</div>
     </div>
   </section>
 
@@ -211,6 +217,7 @@ async function load() {
   setRadio("prompt_default", v.prompt_default);
   setRadio("other_apps", v.other_apps || "record");
   input("onsite_upgrade").checked = !!v.onsite_upgrade;
+  input("onsite_silence_min").value = String(v.onsite_silence_min ?? 10);
   input("calendar_outlook").checked = !!v.calendar_outlook;
   input("user_name").value = v.user_name || "";
   input("out_dir").value = state.out_dir;
@@ -225,6 +232,7 @@ async function save() {
     prompt_default: getRadio("prompt_default"),
     other_apps: getRadio("other_apps"),
     onsite_upgrade: input("onsite_upgrade").checked,
+    onsite_silence_min: input("onsite_silence_min").value.trim(),
     calendar_outlook: input("calendar_outlook").checked,
     user_name: input("user_name").value.trim(),
   };

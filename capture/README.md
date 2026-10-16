@@ -108,6 +108,7 @@ onsite_mic = ""                # part of the input device name for on-site meeti
 device_missing = "ask"         # ask | fail | fallback: when onsite_mic is not available
 onsite_offer = "never"         # never | calendar | always: record a calendar meeting on site when it starts
 onsite_upgrade = true          # an on-site meeting that turns into a Teams call switches to a live recording
+onsite_silence_min = 10        # on site: after this many minutes without speech ask "still running?"; no answer in 5 min = stop & keep; 0 = never ask
 other_apps = "record"          # record | off: calls outside Teams
 tray_open = "app"              # app | web: what a double click on the tray icon opens (the review window or the browser)
 review_app = ""                # recordingz-review.exe; "" = the one next to this exe, else %LOCALAPPDATA%\Programs\recordingz-review\
@@ -115,7 +116,8 @@ update_check = true            # look for a new release once a day and offer it
 ```
 
 Fixed constants: poll every 3 s, 10 s call-end grace, 5 s minimum
-length, 4 h cap, 30 s playback silence stop, 45 s discard box, 2 fps / 1600×900 window video.
+length, 4 h cap, 30 s playback silence stop, 45 s discard box, 2 fps / 1600×900 window video; on site a warning
+when the microphone hears no speech in the first 3 min (speech = RMS above ~-42 dBFS over half a second).
 
 ## Output
 

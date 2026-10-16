@@ -151,10 +151,46 @@ public class AudioTests
         Assert.Equal(1000, rec.LastMicAlive);
         Assert.Equal(0, rec.LastMicLoud);
         Assert.Null(rec.LastMicData);
+        Assert.Null(rec.LastMicSpeech);
         Assert.False(rec.HeardSys);
         Assert.False(rec.HeardMic);
         Assert.Empty(rec.Tracks);
         Assert.Equal(0, rec.Reopens);
+    }
+
+    /// <summary>A 10 ms buffer of 48 kHz stereo: Gaussian noise of the given RMS, optionally with one click.</summary>
+    private static byte[] Buffer10ms(Random rnd, double rms, short click = 0)
+    {
+        var b = new byte[480 * 2 * 2];
+        for (int i = 0; i < b.Length / 2; i++)
+        {
+            double g = Math.Sqrt(-2 * Math.Log(1 - rnd.NextDouble())) * Math.Cos(2 * Math.PI * rnd.NextDouble());
+            BinaryPrimitives.WriteInt16LittleEndian(b.AsSpan(i * 2), (short)Math.Clamp(g * rms, -32768, 32767));
+        }
+        if (click != 0)
+            BinaryPrimitives.WriteInt16LittleEndian(b.AsSpan(100), click);
+        return b;
+    }
+
+    [Fact]
+    public void Room_noise_with_clicks_is_not_speech_but_a_voice_is()
+    {
+        // 2026-10-12: room noise at RMS ~-55 dBFS (58) whose peaks pass SilenceLevel now and then (-26 dBFS = 1650)
+        var clock = new FakeClock(1000);
+        using var rec = new Recorder(@"C:\nowhere\x", withMic: true, micOnly: true, micName: "", clock);
+        var rnd = new Random(12);
+        for (int i = 0; i < 6000; i++)  // a minute
+        {
+            var buf = Buffer10ms(rnd, 58, click: i % 100 == 0 ? (short)1650 : (short)0);
+            Assert.True(i % 100 != 0 || Pcm.Peak16(buf) > Recorder.SilenceLevel);  // the peak would call it loud
+            rec.MeasureSpeech(buf, 48000 * 2, clock.Seconds += 0.01);
+        }
+        Assert.Null(rec.LastMicSpeech);
+
+        // a voice near the laptop: ~-35 dBFS RMS (580), half a second of it
+        for (int i = 0; i < 50; i++)
+            rec.MeasureSpeech(Buffer10ms(rnd, 580), 48000 * 2, clock.Seconds += 0.01);
+        Assert.Equal(clock.Seconds, rec.LastMicSpeech);
     }
 
     private sealed class FakeClock(double seconds) : IClock

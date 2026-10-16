@@ -203,6 +203,12 @@ def spec(version: str) -> dict:
             "/api/system/sound-settings": {"post": _op("Open the Windows sound dialog (mmsys.cpl)", tags=("settings",))},
             "/api/help/{doc}": {"get": _op("A guide: user-guide | install | privacy", tags=("server",), params=[
                 {"name": "doc", "in": "path", "required": True, "schema": {"enum": ["user-guide", "install", "privacy"]}}])},
+            "/api/release-notes": {"get": _op(
+                "Release notes from CHANGELOG.md: {version (running), notes: [{version, date, markdown}] newest first, "
+                "unseen: the notes newer than the version last seen, up to the running one (after a fresh install only "
+                "the running one's)}", tags=("server",))},
+            "/api/release-notes/seen": {"post": _op("The running version's notes were seen: unseen is empty until "
+                                                    "the next update", tags=("server",))},
             "/api/status": {"get": _op("Background job state and the recent events", tags=("server",))},
             "/api/events": {"get": _op(
                 "Server-Sent Events: `event: log` with {n, at, text, level, stem, reload, busy, job_end}, and "

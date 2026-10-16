@@ -22,6 +22,11 @@ public sealed class Recorder : IAudioSource, IDisposable
     public const int AliveLevel = 8;      // int16 peak: a working microphone always has room noise above this
                                           // (~-72 dBFS); a dongle without its headset, or a mic Teams is not
                                           // using, delivers ~0
+    public const int SpeechRms = 260;     // int16 RMS over SpeechWindowS above this = somebody speaks (~-42 dBFS).
+                                          // Peaks do not tell: the room noise of 2026-10-12 (RMS ~-55 dBFS) had
+                                          // peaks above SilenceLevel in ~1 % of the buffers, while speech near
+                                          // the laptop array keeps 97 % of the half seconds above -42 dBFS.
+    public const double SpeechWindowS = 0.5;
 
     private readonly string _stem;
     private readonly IClock _clock;
@@ -35,6 +40,9 @@ public sealed class Recorder : IAudioSource, IDisposable
     private bool _sysPending;          // no output device at the start: the loopback track is still to come
     private double _lastData, _lastLoud, _lastMicLoud, _lastMicAlive;
     private double _lastMicData = double.NaN;
+    private double _lastMicSpeech = double.NaN;
+    private double _micSumSq;  // the mic's current speech window (capture callback only)
+    private long _micSamples;
     private long _bytesReceived;
     private volatile bool _heardSys, _heardMic;
     private int _reopens;
@@ -67,6 +75,7 @@ public sealed class Recorder : IAudioSource, IDisposable
     public double LastMicLoud => Volatile.Read(ref _lastMicLoud);
     public double LastMicAlive => Volatile.Read(ref _lastMicAlive);
     public double? LastMicData { get { var v = Volatile.Read(ref _lastMicData); return double.IsNaN(v) ? null : v; } }
+    public double? LastMicSpeech { get { var v = Volatile.Read(ref _lastMicSpeech); return double.IsNaN(v) ? null : v; } }
     public long BytesReceived => Interlocked.Read(ref _bytesReceived);  // a sleeping Bluetooth device delivers nothing
     public bool HeardSys => _heardSys;  // anything but digital silence arrived on the loopback
     public bool HeardMic => _heardMic;  // ... and on the microphone
@@ -442,6 +451,8 @@ public sealed class Recorder : IAudioSource, IDisposable
         int peak = Pcm.Peak16(pcm);
         if (!isSys && peak > AliveLevel)
             Volatile.Write(ref _lastMicAlive, now);
+        if (!isSys)
+            MeasureSpeech(pcm, rate * t.Channels, now);
         if (peak > SilenceLevel)
         {
             if (isSys)
@@ -455,6 +466,24 @@ public sealed class Recorder : IAudioSource, IDisposable
                 _heardMic = true;
             }
         }
+    }
+
+    /// <summary>The mic's RMS over half-second windows: a window above SpeechRms is speech (LastMicSpeech). Only
+    /// the mic's capture callback calls this, one at a time.</summary>
+    internal void MeasureSpeech(byte[] pcm, int samplesPerS, double now)
+    {
+        for (int i = 0; i + 1 < pcm.Length; i += 2)
+        {
+            double v = BinaryPrimitives.ReadInt16LittleEndian(pcm.AsSpan(i, 2));
+            _micSumSq += v * v;
+        }
+        _micSamples += pcm.Length / 2;
+        if (_micSamples < samplesPerS * SpeechWindowS)
+            return;
+        if (Math.Sqrt(_micSumSq / _micSamples) > SpeechRms)
+            Volatile.Write(ref _lastMicSpeech, now);
+        _micSumSq = 0;
+        _micSamples = 0;
     }
 
     private static void PadSilence(Track t, double gapS)

@@ -69,10 +69,12 @@ Copy-Item (Get-ChildItem $fx -Recurse -Filter "LICENSE*" | Select-Object -First 
 $dst = Join-Path $out "transcribe"
 foreach ($f in "pyproject.toml", "uv.lock", "README.md") { Copy-Item (Join-Path $Transcribe $f) $dst }
 Copy-Item -Recurse (Join-Path $Transcribe "src") $dst
-# the page's Nápověda reads these from the package (a source checkout reads the repository's docs\)
+# the page's Nápověda reads these from the package (a source checkout reads the repository's docs\ and CHANGELOG.md),
+# the release notes too (web/release_notes.py)
 $pkgDocs = Join-Path (Get-ChildItem (Join-Path $dst "src") -Directory | Select-Object -First 1).FullName "docs"
 New-Item -ItemType Directory -Force -Path $pkgDocs | Out-Null
 foreach ($f in "user-guide.md", "install.md", "privacy.md") { Copy-Item (Join-Path $root "docs\$f") $pkgDocs }
+Copy-Item (Join-Path $root "CHANGELOG.md") $pkgDocs
 Get-ChildItem $dst -Recurse -Directory -Filter "__pycache__" | Remove-Item -Recurse -Force
 $commit = if ($Commit) { $Commit } else { (git -C $root rev-parse --short HEAD).Trim() }
 $json = @{ version = $Version; transcribe_commit = $commit } | ConvertTo-Json -Compress

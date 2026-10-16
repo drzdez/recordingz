@@ -1,6 +1,6 @@
 [project]
 name = "recordingz"
-version = "2.0.2"
+version = "2.0.3"
 description = "Transcription, speaker attribution, exports and summaries for recordingz meeting recordings"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"

@@ -7,6 +7,8 @@ from pathlib import Path
 
 from .providers.base import Segment
 
+NO_SPEECH = "(bez řeči – nahrávka neobsahuje rozpoznatelnou řeč)"  # instead of the replies of an empty transcript
+
 
 def _hms(sec: float) -> str:
     return str(timedelta(seconds=int(sec))).rjust(8, "0")
@@ -28,6 +30,8 @@ def to_txt(segments: list[Segment], title: str | None = None, header: dict | Non
         lines.append(f"{k}: {v}")
     if lines:
         lines.append("")
+    if not segments:
+        lines.append(NO_SPEECH)
     for seg in segments:
         who = f"{seg.speaker}: " if seg.speaker else "?: "  # "?" = the diarization gave this reply nobody
         lines.append(f"[{_hms(seg.start)}] {who}{seg.text}")
@@ -35,6 +39,8 @@ def to_txt(segments: list[Segment], title: str | None = None, header: dict | Non
 
 
 def to_srt(segments: list[Segment]) -> str:
+    if not segments:
+        return f"1\n{_srt_ts(0)} --> {_srt_ts(5)}\n{NO_SPEECH}\n"
     blocks = []
     for i, seg in enumerate(segments, 1):
         who = f"{seg.speaker}: " if seg.speaker else "?: "

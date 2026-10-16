@@ -16,7 +16,7 @@ from .media import mix_tracks, probe, utc_now_iso
 from .mic_speakers import apply_mic_track
 from .people import People
 from .timings import step
-from .prompt import build_prompt
+from .prompt import build_prompt, drop_prompt_echoes
 from .providers import get_provider
 from .providers.base import Segment, Word
 from .recording import (Recording, RecordingError, is_media_file, is_sidecar, iter_recordings, make_stem,
@@ -417,6 +417,7 @@ def do_transcribe_compare(cfg: Config, rec: Recording, provider_name: str) -> Pa
     log.info("%s: comparison transcript with %s", rec.stem, provider_name)
     res = provider.transcribe(audio, language=language, prompt=build_prompt(rec, ts.glossary), settings=ts,
                               diarize=True)
+    _drop_prompt_echoes(rec, res, ts.glossary)
     mic = rec.track_path("mic")
     named = {}
     if cfg.user_name and mic and mic.exists() and rec.source != "onsite":
@@ -642,6 +643,7 @@ def do_transcribe(cfg: Config, rec: Recording, *, force: bool = False, diarize: 
         res = provider.transcribe(audio, language=language, prompt=prompt, settings=ts, diarize=want_diarize)
         parts.update(res.timings or {})  # the provider's own phases: model, ASR, alignment, diarization, ...
     log.info("%s: %d segments, language %s, timings %s", rec.stem, len(res.segments), res.language, res.timings)
+    _drop_prompt_echoes(rec, res, ts.glossary)
 
     labels_before = [s.speaker for s in res.segments]
     mic = rec.track_path("mic")
@@ -697,8 +699,26 @@ def do_transcribe(cfg: Config, rec: Recording, *, force: bool = False, diarize: 
         **({"direct_call": call} if call else {}),
         "segments": [s.to_json() for s in res.segments],
     }
+    if not res.segments:  # nothing left: the page, the exports and the minutes say so instead of failing
+        transcript["no_speech"] = True
     rec.write_json(rec.transcript_path, transcript)
     return rec.transcript_path
+
+
+def _drop_prompt_echoes(rec: Recording, res, glossary) -> None:
+    """Drop the replies that only repeat the ASR prompt (prompt.is_prompt_echo), for every provider, and the voices
+    left without a reply: a recording of silence must not end with SPEAKER_00 to name."""
+    kept, dropped = drop_prompt_echoes(res.segments, rec, glossary)
+    if not dropped:
+        return
+    log.info("%s: dropped %d replies echoing the prompt: %s", rec.stem, len(dropped),
+             "; ".join(s.text[:40] for s in dropped[:8]))
+    res.segments = kept
+    left = {s.speaker for s in kept}
+    if res.speaker_embeddings:
+        res.speaker_embeddings = {k: v for k, v in res.speaker_embeddings.items() if k in left}
+    if not kept:
+        log.info("%s: no speech left in the transcript", rec.stem)
 
 
 def _looks_like_a_name(text: str) -> bool:
@@ -976,6 +996,8 @@ def _summary_input(cfg: Config, rec: Recording):
     if not rec.transcript_path.exists():
         raise RecordingError(f"{rec.stem}: no transcript yet")
     data, segs = load_segments(rec)
+    if not segs:  # silence, or only replies that echoed the prompt: an LLM would invent the meeting
+        raise RecordingError(f"{rec.stem}: the recording has no recognisable speech, nothing to summarize")
     names = rec.read_json(rec.speakers_path) if rec.speakers_path.exists() else {}
     if names:
         apply_manual_names(segs, names)
@@ -1219,7 +1241,10 @@ def do_process(cfg: Config, rec: Recording, *, force: bool = False, minutes_anyw
         with step("mluvčí podle potvrzení hovoru"):
             only_with_step(cfg, rec, only_with)
     waiting = [] if minutes_anyway else unnamed_speakers(rec)
-    if cfg.summarize.enabled and waiting:
+    if cfg.summarize.enabled and rec.read_json(rec.transcript_path).get("no_speech"):
+        log.info("%s: no minutes – the recording has no recognisable speech", rec.stem)
+        print("PROGRESS zápis se nevytváří: nahrávka neobsahuje rozpoznatelnou řeč", flush=True)
+    elif cfg.summarize.enabled and waiting:
         log.info("%s: minutes held back – unnamed speakers: %s (name them, then Uložit a přegenerovat zápis)",
                  rec.stem, ", ".join(waiting))
         print(f"PROGRESS zápis počká: nepojmenovaní mluvčí {', '.join(waiting)}", flush=True)

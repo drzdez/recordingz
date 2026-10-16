@@ -3,6 +3,17 @@
 Notes for each release, newest first, written by hand for the people using it. The heading format is fixed
 (`## <version> – <date>`); a test keeps an entry for the current version.
 
+## 2.0.3 – 2026-10-16
+
+- **What's new** after an update: the review window shows these notes once, and Nápověda → "O aplikaci a co je
+  nového" keeps the version and all releases.
+- On-site recordings watch the microphone: when it hears no speech in the first 3 minutes, the app says so (is the
+  laptop at the table, the microphone on?). After 10 minutes without speech it asks "Schůzka ještě běží?"; with
+  no answer within 5 minutes the recording stops and is kept. The minutes are set in Nastavení → Nahrávání
+  (0 = never ask).
+- A recording without speech no longer gets a transcript invented from the meeting's title and participants: such
+  replies are dropped, the transcript says "bez řeči" and no minutes are written for it.
+
 ## 2.0.2 – 2026-10-16
 
 - A recording whose sound can no longer be written (full disk, lost network folder) now warns loudly at once and

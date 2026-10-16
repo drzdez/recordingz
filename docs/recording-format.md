@@ -164,6 +164,10 @@ summary) works only with this file.
   A segment the diarization gave nobody has no speaker (`null`); it is listed as `UNKNOWN` in `speakers`, exported as
   `?`, and can be given a speaker later (then `"assigned": "manual"`).
 - `track`: `sys`, `mic` or `mix`, by the track the segment came from.
+- `no_speech: true` (optional): nothing recognisable was said – `segments` and `speakers` are empty. Replies that only
+  repeat the ASR prompt (its labels `Schůzka`/`Účastníci`/`Pojmy`, the title, participants' names, glossary terms –
+  what Whisper writes into silence) are dropped before the transcript is saved. The `.txt`/`.srt` then hold the line
+  `(bez řeči – nahrávka neobsahuje rozpoznatelnou řeč)` and no minutes are written.
 - `words[]` in a segment is optional: `{ "start", "end", "word", "score" }`.
 - Times are seconds from the start of the recording, shared by all tracks.
 - `language` in a segment is optional (BCP‑47). It is present when the transcript was made **per speaker**: each

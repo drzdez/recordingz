@@ -65,6 +65,8 @@ REST API (described in web/openapi.py, served at /api/openapi.json)
   POST   /api/system/sound-settings                    open the Windows sound dialog (devices, levels, the mic array)
   GET    /api/settings/models                          the model lists asked live (Ollama on this PC, Claude API)
   GET    /api/help/{doc}                               user-guide | install | privacy
+  GET    /api/release-notes                            {version, notes, unseen} from CHANGELOG.md
+  POST   /api/release-notes/seen                       the running version's notes were seen (not shown again)
   GET    /api/status                                   job state + recent events + what the capture app records
   GET    /api/events                                   Server-Sent Events (event: log), replayed after reconnects
   GET    /api/openapi.json                             this API as OpenAPI 3.1
@@ -99,6 +101,7 @@ from ..pipeline import (NEW_SPEAKER, assign_segments, speaker_replies, do_export
                         summary_path_for, meeting_info, merge_same_person, recognize_voices, remove_speaker,
                         set_meeting_link, unmerge_speakers)
 from .. import exports, trash
+from . import release_notes
 from ..fasttrack import needs_voices  # the emergency fast track, separate from the local path
 from ..recording import Recording, RecordingError, find_recording
 from .jobs import JOBS_STATUS, ReviewState, _capture_watch
@@ -181,6 +184,8 @@ ROUTES = [  # (method, path pattern, handler method) - keep web/openapi.py in st
     ("POST", r"/api/jobs/(?P<job>[^/]+)/now", "job_now"),
     ("POST", r"/api/jobs/(?P<job>[^/]+)/cancel", "job_cancel"),
     ("GET", r"/api/help/(?P<doc>[^/]+)", "help"),
+    ("GET", r"/api/release-notes", "release_notes"),
+    ("POST", r"/api/release-notes/seen", "release_notes_seen"),
     ("GET", r"/api/status", "status"),
     ("GET", r"/api/events", "events"),
     ("GET", r"/api/openapi.json", "openapi"),
@@ -681,6 +686,12 @@ def _handler(state: ReviewState, server_ref: dict):
 
         def r_help(self, q, body, doc):
             self._json(help_doc(doc))
+
+        def r_release_notes(self, q, body):
+            self._json(release_notes.state(release_notes.running_version(), state.settings_path))
+
+        def r_release_notes_seen(self, q, body):
+            self._json({"ok": True, "seen": release_notes.mark_seen(release_notes.running_version(), state.settings_path)})
 
         def r_status(self, q, body):
             self._json(state.status())

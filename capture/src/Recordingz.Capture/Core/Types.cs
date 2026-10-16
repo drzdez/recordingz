@@ -87,6 +87,7 @@ public interface IAudioSource
     double LastMicLoud { get; }     // last loud buffer on the mic
     double LastMicAlive { get; }    // last mic buffer with at least room noise (peak > ALIVE_LEVEL)
     double? LastMicData { get; }    // last mic buffer at all; null = never
+    double? LastMicSpeech { get; }  // last half second of speech on the mic (RMS > Recorder.SpeechRms); null = never
     bool MicOnly { get; }           // on-site: only the room microphone
     bool WithMic { get; }
     int Reopens { get; }

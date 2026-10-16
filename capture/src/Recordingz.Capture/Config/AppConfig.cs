@@ -1,5 +1,6 @@
 using System.Globalization;
 using Recordingz.Capture.Core;
+using Recordingz.Capture.Recording;
 using Tomlyn;
 using Tomlyn.Model;
 
@@ -37,6 +38,10 @@ public sealed class AppConfig
 
     /// <summary>[capture] onsite_upgrade: an on-site meeting that turns into a Teams call switches to call recording.</summary>
     public bool OnsiteUpgrade { get; set; } = true;
+
+    /// <summary>[capture] onsite_silence_min: an on-site recording silent this many minutes asks whether the meeting
+    /// still runs, and stops when nobody answers; 0 = never ask.</summary>
+    public int OnsiteSilenceMin { get; set; } = OnsiteSilence.DefaultSilenceMin;
 
     /// <summary>[capture] other_apps: record | off - calls outside Teams.</summary>
     public string OtherApps { get; set; } = "record";
@@ -91,6 +96,7 @@ public sealed class AppConfig
             DeviceMissing = Str(Get(capture, "device_missing"), "ask"),
             OnsiteOffer = Str(Get(capture, "onsite_offer"), "never"),
             OnsiteUpgrade = Truthy(Get(capture, "onsite_upgrade"), true),
+            OnsiteSilenceMin = Minutes(Get(capture, "onsite_silence_min"), OnsiteSilence.DefaultSilenceMin),
             OtherApps = Str(Get(capture, "other_apps"), "record"),
             TrayOpen = Str(Get(capture, "tray_open"), "app"),
             ReviewApp = Str(Get(capture, "review_app"), "").Trim(),
@@ -116,6 +122,7 @@ public sealed class AppConfig
         Set("capture.device_missing", DeviceMissing, fresh.DeviceMissing, v => DeviceMissing = v);
         Set("capture.onsite_offer", OnsiteOffer, fresh.OnsiteOffer, v => OnsiteOffer = v);
         Set("capture.onsite_upgrade", OnsiteUpgrade, fresh.OnsiteUpgrade, v => OnsiteUpgrade = v);
+        Set("capture.onsite_silence_min", OnsiteSilenceMin, fresh.OnsiteSilenceMin, v => OnsiteSilenceMin = v);
         Set("capture.other_apps", OtherApps, fresh.OtherApps, v => OtherApps = v);
         Set("capture.tray_open", TrayOpen, fresh.TrayOpen, v => TrayOpen = v);
         Set("capture.review_app", ReviewApp, fresh.ReviewApp, v => ReviewApp = v);
@@ -172,6 +179,24 @@ public sealed class AppConfig
         double d => d != 0,
         _ => true,
     };
+
+    /// <summary>A number of minutes (integer, float or numeric string), at most MaxMinutes; negative = 0 (off),
+    /// anything else the fallback.</summary>
+    internal static int Minutes(object? value, int fallback)
+    {
+        double? v = value switch
+        {
+            long l => l,
+            int i => i,
+            double d when !double.IsNaN(d) => d,
+            string s when double.TryParse(s.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var d) => d,
+            _ => null,
+        };
+        return v is { } m ? (int)Math.Clamp(Math.Round(m), 0, MaxMinutes) : fallback;
+    }
+
+    /// <summary>The longest recording (AppLogic.MaxDurationS) in minutes: a longer wait would never come.</summary>
+    internal const int MaxMinutes = 240;
 
     /// <summary>Path.expanduser: a leading ~ is the user's profile folder.</summary>
     internal static string ExpandUser(string path)

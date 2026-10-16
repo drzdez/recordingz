@@ -11,7 +11,7 @@ namespace Recordingz.Capture.Config;
 /// </summary>
 public static class SettingsModel
 {
-    internal enum Kind { Str, Bool, Enum }
+    internal enum Kind { Str, Bool, Enum, Minutes }
 
     internal sealed record Field(string Name, string Section, string Key, Kind Kind, string[]? Allowed = null);
 
@@ -22,6 +22,7 @@ public static class SettingsModel
         new("device_missing", "capture", "device_missing", Kind.Enum, ["ask", "fail", "fallback"]),
         new("onsite_offer", "capture", "onsite_offer", Kind.Enum, ["never", "calendar", "always"]),
         new("onsite_upgrade", "capture", "onsite_upgrade", Kind.Bool),
+        new("onsite_silence_min", "capture", "onsite_silence_min", Kind.Minutes),
         new("other_apps", "capture", "other_apps", Kind.Enum, ["record", "off"]),
         new("prompt_default", "capture", "prompt_default", Kind.Enum, ["record", "ask", "skip"]),
         new("calendar_outlook", "calendar", "outlook", Kind.Bool),
@@ -35,6 +36,7 @@ public static class SettingsModel
         ["device_missing"] = cfg.DeviceMissing,
         ["onsite_offer"] = cfg.OnsiteOffer,
         ["onsite_upgrade"] = cfg.OnsiteUpgrade,
+        ["onsite_silence_min"] = cfg.OnsiteSilenceMin,
         ["other_apps"] = cfg.OtherApps,
         ["prompt_default"] = cfg.PromptDefault,
         ["calendar_outlook"] = cfg.UseOutlook,
@@ -64,6 +66,10 @@ public static class SettingsModel
                 case Kind.Str:
                     value = Text(node).Trim();
                     break;
+                case Kind.Minutes:
+                    value = Minutes(node) ?? throw new ArgumentException(
+                        $"{f.Name}: zadejte celý počet minut 0–{AppConfig.MaxMinutes} (0 = vypnuto), ne {Repr(node)}");
+                    break;
                 default:
                     var s = AsString(node);
                     if (s is null || Array.IndexOf(f.Allowed!, s) < 0)
@@ -88,6 +94,7 @@ public static class SettingsModel
                 case "device_missing": cfg.DeviceMissing = (string)value; break;
                 case "onsite_offer": cfg.OnsiteOffer = (string)value; break;
                 case "onsite_upgrade": cfg.OnsiteUpgrade = (bool)value; break;
+                case "onsite_silence_min": cfg.OnsiteSilenceMin = (int)value; break;
                 case "other_apps": cfg.OtherApps = (string)value; break;
                 case "prompt_default": cfg.PromptDefault = (string)value; break;
                 case "calendar_outlook": cfg.UseOutlook = (bool)value; break;
@@ -101,6 +108,15 @@ public static class SettingsModel
 
     private static string? AsString(JsonNode? node)
         => node is JsonValue v && v.GetValueKind() == JsonValueKind.String ? v.GetValue<string>() : null;
+
+    /// <summary>A whole number of minutes in 0..MaxMinutes, as a number or a numeric string (an empty number
+    /// field sends ""); null = not one.</summary>
+    private static int? Minutes(JsonNode? node)
+    {
+        string? s = node is JsonValue v && v.GetValueKind() == JsonValueKind.Number ? v.ToJsonString() : AsString(node)?.Trim();
+        return int.TryParse(s, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture,
+                            out var m) && m <= AppConfig.MaxMinutes ? m : null;
+    }
 
     // Python's bool() on what json.loads produced.
     private static bool Truthy(JsonNode? node) => node switch

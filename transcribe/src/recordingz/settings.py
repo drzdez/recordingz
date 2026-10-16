@@ -96,6 +96,9 @@ SECTIONS: tuple[Section, ...] = (
                       "U schůzek bez odkazu na Teams (pravděpodobně na místě)", "U každé schůzky v kalendáři")),
         Field("capture.onsite_upgrade", "Když během nahrávání na místě začne hovor v Teams, přejít na živý záznam",
               "bool", True, "Nahrávka na místě skončí a hned začne živá (zvuk systému + mikrofon); obě se propojí."),
+        Field("capture.onsite_silence_min", "Zeptat se „Schůzka ještě běží?“ po tichu (min)", "int", 10,
+              "Nahrávka na místě nepozná konec schůzky. Po tolika minutách bez řeči se zeptá; bez odpovědi se za "
+              "5 minut ukončí a uloží. 0 = nikdy."),
         Field("capture.other_apps", "Hovory v jiných aplikacích", "enum", "record",
               "Zoom, Webex, Slack, Discord, WhatsApp, Skype, Signal a schůzka v prohlížeči (Google Meet, Zoom, Webex, "
               "Teams na webu, Jitsi, Whereby v názvu okna). Mikrofon se bere ten, který aplikace hovoru používá; "

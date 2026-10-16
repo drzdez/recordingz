@@ -244,6 +244,12 @@ enabled in Windows); title and participants come from the calendar; it ends with
 microphone, so your voice is not named from it; names come from voice prints and the diarization, the rest you add on
 the page.
 
+There is no call whose end would stop an on-site recording, so capture listens for speech: when the microphone hears
+nobody in the first 3 minutes, a notification asks whether the laptop is at the table and the microphone on. After
+10 minutes without speech (`[capture] onsite_silence_min`, also on the settings page; 0 = never) a box asks *Is the
+meeting still running?* – *Yes* keeps recording, *No* or no answer within 5 minutes stops and keeps the recording
+(`stop_reason` `silence`; the trailing silence stays in the file, the log notes when it started).
+
 ## 3. Output
 
 Every recording has its own folder `D:\meetings\YYYY\MM\<stem>\` (stem = `2026-09-03_1331_project-kickoff`: date,

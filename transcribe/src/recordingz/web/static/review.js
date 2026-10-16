@@ -2779,8 +2779,11 @@ function renderMarkdown(/** @type {string} */ md) {
         const m2 = lines[i].match(/^(\s*)([-*]|\d+\.)\s+(.*)$/);
         if (!m2) break;
         const depth = Math.floor(m2[1].replace(/\t/g, "  ").length / 2);
-        items.push({ depth, text: m2[3] });
+        const text = [m2[3]];
         i++;
+        // an item wrapped onto indented lines (CHANGELOG.md) goes on in the same item
+        while (i < lines.length && /^\s+\S/.test(lines[i]) && !/^\s*([-*]|\d+\.)\s/.test(lines[i])) text.push(lines[i++].trim());
+        items.push({ depth, text: text.join(" ") });
       }
       let html = `<${tag}>`; let cur = 0;
       for (const it of items) {
@@ -2897,9 +2900,11 @@ async function openHelp(/** @type {string} */ doc) {
   helpBox.hidden = false;
   helpPick.value = doc;
   helpMain.innerHTML = '<div class="empty">Načítám…</div>';
+  if (doc === "about") { await openAbout(); return; }
   /** @type {any} */ let r;
   try { r = await api(`/api/help/${encodeURIComponent(doc)}`); }
   catch (e) { helpMain.innerHTML = `<div class="empty">${escapeHtml(String(e))}</div>`; return; }
+  if (helpPick.value !== doc) return;  // another guide was picked meanwhile
   if (r.url) {  // no local docs folder (installed package): the same page on GitHub
     helpMain.innerHTML = `<p>Nápověda k této instalaci je na webu: <a href="${escapeHtml(r.url)}">${escapeHtml(r.url)}</a></p>`;
     externalLinks(helpMain);
@@ -2912,6 +2917,28 @@ async function openHelp(/** @type {string} */ doc) {
     const local = href.match(/(?:^|\/)(user-guide|install|privacy)\.md(?:#.*)?$/);
     if (local) a.addEventListener("click", ev => { ev.preventDefault(); openHelp(local[1]); });
   }
+  externalLinks(helpMain);
+}
+
+/** @typedef {{version:string,date:string,markdown:string}} ReleaseNote */
+/** the release notes as the help and the "what is new" panel show them: a heading with the date, then the notes */
+function releaseNotesHtml(/** @type {ReleaseNote[]} */ notes) {
+  return notes.map(n => `<section class="releaseNote"><h2>${escapeHtml(n.version)} <span class="meta">${escapeHtml(n.date)}</span></h2>
+${renderMarkdown(n.markdown)}</section>`).join("\n");
+}
+
+/** Nápověda → O aplikaci: the running version and every release's notes (CHANGELOG.md, in English) */
+async function openAbout() {
+  /** @type {any} */ let r;
+  try { r = await api("/api/release-notes"); }
+  catch (e) { helpMain.innerHTML = `<div class="empty">${escapeHtml(String(e))}</div>`; return; }
+  if (helpPick.value !== "about") return;
+  helpMain.innerHTML = `<h1>recordingz <span id="aboutVersion">${escapeHtml(r.version)}</span></h1>
+<p>Nahrávání schůzek v Teams, přepis, mluvčí a zápisy. <a href="https://github.com/drzdez/recordingz">Stránka projektu</a> ·
+<a href="https://github.com/drzdez/recordingz/releases">Vydání</a></p>
+<h1>Co je nového</h1>
+${r.notes.length ? releaseNotesHtml(r.notes) : '<p class="meta">Poznámky k vydání tu nejsou (chybí CHANGELOG.md).</p>'}`;
+  helpBox.scrollTop = 0;
   externalLinks(helpMain);
 }
 
@@ -4157,11 +4184,35 @@ $("wizardSkip").onclick = async () => {
 };
 $("wizardOpen").onclick = () => { closeSettings(); openWizard(); };
 
+// ---- what is new: once after an install or update, the notes since the version last seen (the server remembers it)
+const whatsNew = $("whatsNew");
+async function showWhatsNew() {
+  /** @type {any} */ let r;
+  try { r = await api("/api/release-notes"); } catch { return; /* an older server: nothing to show */ }
+  if (!r.unseen.length) return;
+  $("whatsNewTitle").textContent = `Co je nového ve verzi ${r.version}`;
+  $("whatsNewMain").innerHTML = releaseNotesHtml(r.unseen);
+  externalLinks($("whatsNewMain"));
+  whatsNew.hidden = false;
+}
+async function closeWhatsNew() {
+  whatsNew.hidden = true;
+  try { await api("/api/release-notes/seen", send("POST")); } catch { /* shown again next time */ }
+}
+$("whatsNewClose").onclick = closeWhatsNew;
+$("whatsNewAll").onclick = () => { closeWhatsNew(); openHelp("about"); };
+document.addEventListener("keydown", ev => { if (ev.key === "Escape" && !whatsNew.hidden && helpBox.hidden) closeWhatsNew(); });
+
 (async () => {
   const opening = new URLSearchParams(location.search).get("open");
   if (opening === "settings") openSettings();  // the tray's Settings…
   else if (opening === "wizard") openWizard();  // the tray's Setup wizard…
-  else api("/api/setup?needed=1").then(st => { if (st.needed) openWizard(); }).catch(() => { /* an older server */ });
+  else api("/api/setup?needed=1").then(st => {
+    if (st.needed) {  // a fresh install: the wizard, and nothing "new" to tell
+      openWizard();
+      api("/api/release-notes/seen", send("POST")).catch(() => {});
+    } else showWhatsNew();
+  }).catch(() => { /* an older server */ });
   try {
     await loadList();
     if (pick.value) await loadRecording(pick.value);

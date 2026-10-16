@@ -82,6 +82,9 @@ def test_review_page(script, tmp_path, monkeypatch):
         (tmp_path / "setup-done").write_text("", encoding="utf-8")
     else:  # a fresh install: no name yet (an existing configuration does not get the wizard by itself)
         cfg_file.write_text(TOML.replace('name = "Jan Novák"  # your name', 'name = ""  # your name'), encoding="utf-8")
+    if script not in ("wizard.test.mjs", "release-notes.test.mjs"):  # "what is new" would cover the page too
+        from recordingz.web import release_notes
+        release_notes.mark_seen(release_notes.running_version(), cfg_file)
     from recordingz import setup
     monkeypatch.setattr(setup, "gpu", lambda: {"name": "NVIDIA GeForce RTX 4070 Laptop GPU", "vram_gb": 8})
     monkeypatch.setattr(setup, "ollama_running", lambda url: False)
