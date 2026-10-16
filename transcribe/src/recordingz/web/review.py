@@ -1389,7 +1389,9 @@ class ReviewState:
                    # what the job will make, for the page to say it up front
                    "plan": ({"cloud": "--cloud" in fn or _after(fn, "--transcribe-with") == "cloud",
                              "voices": "--voices" in fn,
-                             "minutes_wait": "--minutes-when-named" in fn} if isinstance(fn, list) else {})}
+                             "minutes_wait": "--minutes-when-named" in fn,
+                             "minutes": "--no-minutes" not in fn,
+                             "only_with": _after(fn, "--only-with") or ""} if isinstance(fn, list) else {})}
             if isinstance(fn, list):  # a command: run in a child process that can be stopped
                 job["argv"], job["fn"] = fn, None
             self.jobs.append(job)

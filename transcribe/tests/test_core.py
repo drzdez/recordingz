@@ -2732,7 +2732,12 @@ def test_jobs_status_file_tells_the_tray_what_runs_and_what_ended(tmp_path, monk
             break
         time.sleep(0.02)
     assert d["busy"] and d["current"]["stem"] == rec.stem and d["current"]["title"] == rec.title
-    assert st.jobs_state()["current"]["plan"] == {"cloud": False, "voices": False, "minutes_wait": True}
+    assert st.jobs_state()["current"]["plan"] == {"cloud": False, "voices": False, "minutes_wait": True,
+                                                  "minutes": True, "only_with": ""}
+    # what the page says while it waits: a 1:1 call names the other side (its minutes go at once), no minutes
+    st.run_process(rec, minutes=False, only_with="Marek Hudec")
+    assert st.jobs_state()["queue"][0]["plan"] == {
+        "cloud": False, "voices": False, "minutes_wait": True, "minutes": False, "only_with": "Marek Hudec"}
     go.set()
     for _ in range(100):
         if not st.status()["busy"]:

@@ -1245,12 +1245,16 @@ function queuePlace(/** @type {string} */ stem) {
                            before: j.current ? j.current.stem : "" };
 }
 
-/** What a process job will make, so the expectation is set before it ends: the minutes may wait for names. */
+/** What a process job will make, so the expectation is set before it ends: the minutes may wait for names.
+ * In the words of the panel's "Provede se" (a 1:1 call names the other side, so its minutes go at once). */
 function processWhat(/** @type {any} */ q) {
   if (q.name !== "process") return "zpracování";
   const p = q.plan || {};
   const transcript = p.cloud ? "přepis přes cloud" : "přepis";
-  const speakers = p.cloud ? (p.voices ? ", mluvčí lokálně podle hlasu" : "") : ", rozpoznání mluvčích";
+  const speakers = (p.cloud ? (p.voices ? ", mluvčí lokálně podle hlasových otisků" : "") : ", rozpoznání mluvčích")
+    + (p.only_with ? `, druhá strana pojmenovaná jako ${p.only_with}` : "");
+  if (p.minutes === false) return `${transcript}${speakers}, bez zápisu`;
+  if (p.only_with) return `${transcript}${speakers}; zápis hned`;
   if (!p.minutes_wait) return `${transcript}${speakers} a zápis`;
   return p.cloud && !p.voices
     ? `${transcript}; zápis počká, až pojmenujete mluvčí (cloud je nerozpozná)`
@@ -1313,18 +1317,27 @@ function renderQueueBanner() {
   $("subtabs").appendChild(bar);
 }
 
+/** Where a recording without a transcript is in the processing: the same words on Mluvčí, Přepis and Zápis. */
+function queuedHtml(/** @type {any} */ q, /** @type {number} */ est) {
+  return q.running
+    ? `<p class="queued">⏳ Právě se zpracovává${q.since ? ` (od ${escapeHtml(q.since)})` : ""} – ${escapeHtml(processWhat(q))}, zhruba ${est} min.</p>`
+    : `<p class="queued">⏳ Je ve frontě na zpracování (${escapeHtml(processWhat(q))}) – <b>${q.place}. v pořadí</b>.` +
+      (q.held ? " Čeká na konec nahrávání." : q.before ? ` Teď běží ${escapeHtml(q.before)}.` : "") + `</p>`;
+}
+
+/** Minutes the processing of a recording of this length takes, roughly (what the page says up front). */
+function processEstimate(/** @type {any} */ r) {
+  return Math.max(2, Math.round(Math.round((r.duration_s || 0) / 60) / 6) + 3);
+}
+
 function renderNotTranscribed(r) {
   main.innerHTML = "";
   const box = document.createElement("div"); box.className = "empty";
   box.dataset.queued = r.stem;
-  const mins = Math.round((r.duration_s || 0) / 60);
-  const est = Math.max(2, Math.round(mins / 6) + 3);
+  const est = processEstimate(r);
   const q = queuePlace(r.stem);
   if (q) {  // already asked for: say where it is instead of offering it again
-    box.innerHTML = `<p><b>${escapeHtml(r.title)}</b> ještě nemá přepis.</p>` + (q.running
-      ? `<p class="queued">⏳ Právě se zpracovává${q.since ? ` (od ${escapeHtml(q.since)})` : ""} – ${escapeHtml(processWhat(q))}, zhruba ${est} min.</p>`
-      : `<p class="queued">⏳ Je ve frontě na zpracování (${escapeHtml(processWhat(q))}) – <b>${q.place}. v pořadí</b>.` +
-        (q.held ? " Čeká na konec nahrávání." : q.before ? ` Teď běží ${escapeHtml(q.before)}.` : "") + `</p>`) +
+    box.innerHTML = `<p><b>${escapeHtml(r.title)}</b> ještě nemá přepis.</p>` + queuedHtml(q, est) +
       `<p>Až doběhne, přepis se tu ukáže sám.</p>`;
     box.appendChild(queueButtons(q));
     main.appendChild(box);
@@ -2345,6 +2358,7 @@ function setJobs(/** @type {any} */ j) {
       renderDoc(scroller().scrollTop);
     // an open recording without a transcript shows its place in the queue: keep it current
     if (review && !review.transcribed && main.querySelector("[data-queued]")) renderNotTranscribed(review);
+    if (review && !review.transcribed && !docMain.hidden && docMain.querySelector("[data-queued]")) renderDoc();
   }
   // a recording started while something runs: ask (the server stops it by itself if nobody answers in time)
   const ask = $("recAsk");
@@ -3121,8 +3135,15 @@ async function renderDoc(/** @type {number|null=} */ scrollTo = null) {
   const mine = ++docRender;
   if (!review || !review.docs) {
     docMain.innerHTML = '<div class="empty">Nahrávka ještě nemá přepis.</div>';
-    if (review && !review.transcribed) {  // where to start it
+    if (review && !review.transcribed) {  // where it is in the processing, or where to start it
       const box = /** @type {HTMLElement} */ (docMain.firstElementChild);
+      box.dataset.queued = review.stem;
+      const q = queuePlace(review.stem);
+      if (q) {
+        box.insertAdjacentHTML("beforeend", queuedHtml(q, processEstimate(review)) +
+                               "<p>Až doběhne, přepis se tu ukáže sám (zrušit jde v záložce Mluvčí).</p>");
+        return;
+      }
       const go = document.createElement("p");
       go.innerHTML = 'Zpracování spustíte v záložce <button type="button" class="linkish" id="toSpeakers">Mluvčí</button>.';
       box.appendChild(go);
