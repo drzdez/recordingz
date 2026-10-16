@@ -56,6 +56,24 @@ public static class UpdateLogic
     public static bool TrustedUrl(string url) =>
         url.StartsWith("https://github.com/drzdez/recordingz/releases/download/", StringComparison.Ordinal);
 
+    /// <summary>The answer to "install?": only a clear No declines the version (no balloon for it again); a box
+    /// that closed by itself (null, the user was away) offers it again.</summary>
+    public static bool Declines(bool? answer) => answer == false;
+
+    /// <summary>A downloaded installer left in %TEMP% that can go: an unfinished .part, or an MSI of this version or
+    /// an older one (installed already, or superseded). A newer one may still be installed; other files are not ours.</summary>
+    public static bool StaleDownload(string fileName, string running)
+    {
+        if (!fileName.StartsWith("recordingz-", StringComparison.OrdinalIgnoreCase))
+            return false;
+        if (fileName.EndsWith("-x64.msi.part", StringComparison.OrdinalIgnoreCase))
+            return true;
+        if (!fileName.EndsWith("-x64.msi", StringComparison.OrdinalIgnoreCase))
+            return false;
+        var version = fileName["recordingz-".Length..^"-x64.msi".Length];
+        return Version.TryParse(version, out _) && !IsNewer(version, running);
+    }
+
     private static string? Str(JsonElement e, string name) =>
         e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
 
@@ -72,6 +90,7 @@ public static class UpdateLogic
 public sealed class Updater : IDisposable
 {
     private static readonly HttpClient Http = CreateClient();
+    public static readonly TimeSpan DownloadStall = TimeSpan.FromSeconds(60);  // no data this long = give up
     private readonly AppConfig _cfg;
     private readonly Action<Release> _found;
     private readonly System.Threading.Timer _timer;
@@ -82,6 +101,7 @@ public sealed class Updater : IDisposable
     {
         _cfg = cfg;
         _found = found;
+        CleanDownloads(Path.GetTempPath(), Versions.AppVersion);
         // the first check a minute after start (not in the way of the start itself), then hourly whether it is due
         _timer = new System.Threading.Timer(_ => _ = TickAsync(), null, TimeSpan.FromMinutes(1), TimeSpan.FromHours(1));
     }
@@ -139,24 +159,82 @@ public sealed class Updater : IDisposable
     {
         if (!UpdateLogic.TrustedUrl(rel.MsiUrl))
             throw new InvalidOperationException($"unexpected download address {rel.MsiUrl}");
-        var path = Path.Combine(Path.GetTempPath(), rel.MsiName);
         Log.Info($"downloading {rel.MsiUrl}");
-        await using (var src = await Http.GetStreamAsync(rel.MsiUrl))
-        await using (var dst = File.Create(path))
-            await src.CopyToAsync(dst);
-        var size = new FileInfo(path).Length;
-        if (rel.Size > 0 && size != rel.Size)
-            throw new InvalidOperationException($"the download has {size} bytes, the release says {rel.Size}");
-        if (rel.Sha256 is not null)
-        {
-            await using var f = File.OpenRead(path);
-            var hash = Convert.ToHexStringLower(await SHA256.HashDataAsync(f));
-            if (hash != rel.Sha256)
-                throw new InvalidOperationException("the download does not match the release's SHA-256");
-        }
+        var path = await DownloadAsync(Http, rel, Path.GetTempPath(), DownloadStall);
         Log.Info($"starting the installer of {rel.Version}");
         // /passive: progress only, no questions (the folder page is for a fresh install); the MSI quits this app
         Process.Start(new ProcessStartInfo("msiexec.exe", $"/i \"{path}\" /passive") { UseShellExecute = false });
+    }
+
+    /// <summary>Downloads the release's MSI into <paramref name="dir"/> and verifies it; returns its path. It is
+    /// written as &lt;name&gt;.part and gets its name only once size and SHA-256 match, so a stalled, cut or wrong
+    /// download leaves nothing behind. A download that brings no data for <paramref name="stall"/> is given up:
+    /// HttpClient.Timeout covers only the headers once the body is streamed.</summary>
+    internal static async Task<string> DownloadAsync(HttpClient http, Release rel, string dir, TimeSpan stall)
+    {
+        var path = Path.Combine(dir, rel.MsiName);
+        var part = path + ".part";
+        try
+        {
+            using (var cts = new CancellationTokenSource(stall))
+            {
+                using var resp = await http.GetAsync(rel.MsiUrl, HttpCompletionOption.ResponseHeadersRead, cts.Token);
+                resp.EnsureSuccessStatusCode();
+                await using var src = await resp.Content.ReadAsStreamAsync(cts.Token);
+                await using var dst = File.Create(part);
+                var buf = new byte[81920];
+                int n;
+                while ((n = await src.ReadAsync(buf, cts.Token)) > 0)
+                {
+                    await dst.WriteAsync(buf.AsMemory(0, n));
+                    cts.CancelAfter(stall);  // data arrived: the stall clock starts again
+                }
+            }
+            var size = new FileInfo(part).Length;
+            if (rel.Size > 0 && size != rel.Size)
+                throw new InvalidOperationException($"the download has {size} bytes, the release says {rel.Size}");
+            if (rel.Sha256 is not null)
+            {
+                string hash;
+                await using (var f = File.OpenRead(part))
+                    hash = Convert.ToHexStringLower(await SHA256.HashDataAsync(f));
+                if (hash != rel.Sha256)
+                    throw new InvalidOperationException("the download does not match the release's SHA-256");
+            }
+            File.Move(part, path, overwrite: true);
+            return path;
+        }
+        catch (Exception e)
+        {
+            try { File.Delete(part); }
+            catch (Exception) { }
+            if (e is OperationCanceledException)
+                throw new InvalidOperationException($"the download stalled (no data for {stall.TotalSeconds:0} s)", e);
+            throw;
+        }
+    }
+
+    /// <summary>Installers of earlier updates left in %TEMP% (UpdateLogic.StaleDownload); run at start.</summary>
+    internal static void CleanDownloads(string dir, string running)
+    {
+        try
+        {
+            foreach (var f in Directory.EnumerateFiles(dir, "recordingz-*.msi*"))
+            {
+                if (!UpdateLogic.StaleDownload(Path.GetFileName(f), running))
+                    continue;
+                try
+                {
+                    File.Delete(f);
+                    Log.Info($"deleted the old installer {Path.GetFileName(f)}");
+                }
+                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }  // still running
+            }
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Log.Warn($"old installers not cleaned up: {e.Message}");
+        }
     }
 
     private static DateTime? LastCheck() =>

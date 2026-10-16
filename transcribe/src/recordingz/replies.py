@@ -17,6 +17,7 @@ from pathlib import Path
 import numpy as np
 
 from .config import Config
+from .fileio import registry_lock
 from .recording import Recording, iter_recordings, resolve_recording
 
 log = logging.getLogger(__name__)
@@ -231,21 +232,22 @@ def recompute_prints(cfg: Config, pid: str, only: tuple[str, str] | None = None,
     targets = recompute_targets(cfg, pid, only)
     compute(cfg, list({rec.stem: rec for rec, _ in targets}.values()), progress)
     model = cfg.transcribe.diarize_model
-    vp = Voiceprints.load(cfg.out_dir, cfg.voiceprints.max_prints)
+    vectors = [(rec, label, *group_vector(rec, label, model)) for rec, label in targets]
     done, skipped = 0, 0
-    for rec, label in targets:
-        vec, n = group_vector(rec, label, model)
-        if vec is None:
-            skipped += 1
-            continue
-        for p in vp.people.get(pid, []):
-            if p.get("stem") == rec.stem and p.get("label") == label:
-                p["v"] = vec
-                p.pop("stale", None)
-                p["recomputed"] = n
-                done += 1
-    if vp.model and vp.model != model:
-        log.warning("prints were made with %s, the replies with %s", vp.model, model)
-    vp.save()
+    with registry_lock(cfg.out_dir):
+        vp = Voiceprints.load(cfg.out_dir, cfg.voiceprints.max_prints)
+        for rec, label, vec, n in vectors:
+            if vec is None:
+                skipped += 1
+                continue
+            for p in vp.people.get(pid, []):
+                if p.get("stem") == rec.stem and p.get("label") == label:
+                    p["v"] = vec
+                    p.pop("stale", None)
+                    p["recomputed"] = n
+                    done += 1
+        if vp.model and vp.model != model:
+            log.warning("prints were made with %s, the replies with %s", vp.model, model)
+        vp.save()
     progress(f"přepočítáno {done} vzorků" + (f", {skipped} bez replik" if skipped else ""))
     return {"recomputed": done, "skipped": skipped}

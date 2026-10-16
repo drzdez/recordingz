@@ -18,6 +18,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Iterable
 
+from .fileio import atomic_write_text
 from .providers.base import Segment
 
 DISPLAY_MODES = ("first", "full", "nick")
@@ -97,7 +98,7 @@ class People:
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         data = {"format": 1, "people": [asdict(p) for p in self.people]}
-        self.path.write_text(json.dumps(data, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+        atomic_write_text(self.path, json.dumps(data, ensure_ascii=False, indent=1) + "\n")
 
     # ---- lookup
     def get(self, pid: str) -> Person | None:

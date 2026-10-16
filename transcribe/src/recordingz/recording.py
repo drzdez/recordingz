@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, Iterator
 
 from . import FORMAT_VERSION
+from .fileio import atomic_write_text
 from .media import MEDIA_SUFFIXES
 
 STEM_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_\d{4}_[a-z0-9-]+$")
@@ -109,10 +110,10 @@ class Recording:
         return cls(stem_path=sidecar_path.with_name(stem), sidecar=data)
 
     def save_sidecar(self) -> None:
-        self.sidecar_path.write_text(json.dumps(self.sidecar, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        atomic_write_text(self.sidecar_path, json.dumps(self.sidecar, ensure_ascii=False, indent=2) + "\n")
 
     def write_json(self, path: Path, data: Any) -> None:
-        path.write_text(json.dumps(data, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
+        atomic_write_text(path, json.dumps(data, ensure_ascii=False, indent=1) + "\n")
 
     def read_json(self, path: Path) -> Any:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -164,6 +165,18 @@ def resolve_recording(target: Path | str, out_dir: Path) -> Recording:
         if cand.exists():
             return Recording.load(cand)
     raise RecordingError(f"recording not found: {target}")
+
+
+def find_recording(stem: str, out_dir: Path) -> Recording:
+    """By its stem only (or `latest`), under out_dir: what a web request names, never a path."""
+    if str(stem).strip().lower() == "latest":
+        return latest_recording(out_dir)
+    if not STEM_RE.fullmatch(stem):
+        raise RecordingError(f"not a recording name: {stem!r}")
+    cand = out_dir / stem[:4] / stem[5:7] / stem / (stem + ".json")
+    if not cand.exists():
+        raise RecordingError(f"recording not found: {stem}")
+    return Recording.load(cand)
 
 
 def iter_recordings(out_dir: Path) -> Iterator[Recording]:

@@ -19,6 +19,8 @@ from collections import Counter
 from datetime import datetime
 from pathlib import Path
 
+from .fileio import atomic_write_text
+
 FILE_NAME = "voiceprints.json"
 MAX_PER_PERSON = 20  # more prints cover more headsets, rooms and calls; over the limit the weakest one goes (prune)
 GOOD_SECONDS = 60.0  # a print from less speech than this is a weaker average of the voice
@@ -85,7 +87,7 @@ class Voiceprints:
         data = {"format": 1, "model": self.model, "people": self.people}
         if any(self.excluded.values()):
             data["excluded"] = {pid: rows for pid, rows in self.excluded.items() if rows}
-        self.path.write_text(json.dumps(data, ensure_ascii=False) + "\n", encoding="utf-8")
+        atomic_write_text(self.path, json.dumps(data, ensure_ascii=False) + "\n")
 
     # ---- enrolment
     def enroll(self, pid: str, vector: list[float], stem: str, label: str, model: str = "",

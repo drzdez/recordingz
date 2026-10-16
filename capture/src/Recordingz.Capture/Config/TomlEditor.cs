@@ -83,7 +83,33 @@ public static class TomlEditor
 
         // The prototype wrote in Python text mode, i.e. with the platform line ending (CRLF on Windows).
         var nl = Environment.NewLine;
-        File.WriteAllText(path, string.Join(nl, lines) + nl, new UTF8Encoding(false));
+        WriteAtomic(path, string.Join(nl, lines) + nl);
+    }
+
+    /// <summary>Writes a temp file next to the TOML and moves it over: a reader (the transcribe part, the
+    /// ConfigWatcher) sees the old file or the new one, never a truncated one. The move is retried briefly while a
+    /// reader holds the file without sharing delete.</summary>
+    internal static void WriteAtomic(string path, string text, int attempts = 10)
+    {
+        var tmp = path + ".tmp";
+        File.WriteAllText(tmp, text, new UTF8Encoding(false));
+        for (var i = 1; ; i++)
+        {
+            try
+            {
+                File.Move(tmp, path, overwrite: true);
+                return;
+            }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+            {
+                if (i >= attempts)
+                {
+                    try { File.Delete(tmp); } catch (Exception) { }
+                    throw;
+                }
+                Thread.Sleep(50);
+            }
+        }
     }
 
     /// <summary>A value as TOML: bool true/false, numbers as-is, everything else a basic string with \ and " escaped.</summary>

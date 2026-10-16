@@ -108,11 +108,4 @@ public static partial class Naming
         Log.Info($"renamed {oldName} -> {newName}");
         return Path.Combine(newDir, newName);
     }
-
-    /// <summary>A file name of the old stem carried over to the new stem ("&lt;old&gt;_sys.wav" ->
-    /// "&lt;new&gt;_sys.wav"), for the track/screen/mix entries after <see cref="RenameFiles"/>.</summary>
-    public static string Restem(string fileName, string oldStemName, string newStemName) =>
-        fileName.StartsWith(oldStemName, StringComparison.Ordinal)
-            ? newStemName + fileName[oldStemName.Length..]
-            : fileName;
 }

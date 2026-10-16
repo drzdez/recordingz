@@ -50,6 +50,7 @@ public sealed class WatchdogTests
         public string MicName { get; set; } = "";
         public string OutputName { get; set; } = "";
         public bool SysPending { get; set; }
+        public string? WriteFailed { get; set; }
         public int AddSysCalls { get; private set; }
         /// <summary>What a reopen does to the tracks; default: nothing (the same devices are reopened).</summary>
         public Action? OnReopen { get; set; }
@@ -169,6 +170,31 @@ public sealed class WatchdogTests
             }
         }
         Assert.Equal(Watchdog.AudioMaxReopens, rec2.ReopenCalls);
+    }
+
+    [Fact]
+    public void A_failed_disk_write_raises_the_alarm_at_once_while_the_streams_look_healthy()
+    {
+        // the writer thread died on a full disk while the devices kept delivering: nothing else would notice
+        var clock = new WdFakeClock();
+        var notes = new WdFakeNotifier();
+        var rec = new WdFakeRec(clock) { WriteFailed = "x_sys.wav: There is not enough space on the disk." };
+        var wd = new Watchdog(clock, notes);
+        wd.Tick(rec, 3, playback: true);  // before the stall checks start, and in playback too
+        Assert.NotNull(wd.Warned);
+        Assert.Contains("zápis na disk selhal", wd.Warned);
+        Assert.Single(notes.Notes);
+        Assert.Contains("NEUKLÁDÁ", notes.Notes[0]);
+        Assert.Equal(1, notes.Beeps);
+        Assert.Equal(0, rec.ReopenCalls);
+
+        clock.Advance(60);
+        wd.Tick(rec, 63, playback: true);
+        Assert.Single(notes.Notes);  // not again before the rewarn interval
+        clock.Advance(Watchdog.AudioRewarnS);
+        wd.Tick(rec, 400, playback: true);
+        Assert.Equal(2, notes.Notes.Count);
+        Assert.Equal(2, notes.Beeps);
     }
 
     [Fact]

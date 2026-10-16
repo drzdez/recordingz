@@ -9,6 +9,8 @@ namespace Recordingz.Capture.App;
 /// .NET app can share one log file and the same grep habits keep working.</summary>
 public sealed class FileLog : IDisposable
 {
+    public const long MaxBytes = 5 * 1024 * 1024;  // a larger log is moved to recordingz.log.1 at start
+
     private readonly object _lock = new();
     private readonly string _path;
     private StreamWriter? _writer;
@@ -17,7 +19,24 @@ public sealed class FileLog : IDisposable
     {
         _path = path;
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        Rotate(path);
         Open();
+    }
+
+    /// <summary>Keeps the log from growing forever: over <paramref name="maxBytes"/> it becomes &lt;log&gt;.1 (the
+    /// previous .1 is dropped). When the transcribe part has the file open, the move fails and waits for the
+    /// next start.</summary>
+    internal static void Rotate(string path, long maxBytes = MaxBytes)
+    {
+        try
+        {
+            var info = new FileInfo(path);
+            if (info.Exists && info.Length > maxBytes)
+                File.Move(path, path + ".1", overwrite: true);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+        }
     }
 
     private void Open()

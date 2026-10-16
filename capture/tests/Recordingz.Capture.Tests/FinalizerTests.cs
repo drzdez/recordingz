@@ -250,4 +250,96 @@ public sealed class FinalizerTests : IDisposable
 
         Assert.Equal(0, Orphans.Recover(_tmp, () => null));  // has a sidecar now
     }
+
+    [Fact]
+    public void An_orphan_with_an_impossible_date_does_not_stop_the_others_from_being_recovered()
+    {
+        // "2026-13-45" looks like a stem but is no date: it used to throw and end the whole recovery
+        var badDir = Path.Combine(_tmp, "2026", "09", "2026-13-45_0900_divna");
+        Directory.CreateDirectory(badDir);
+        var bad = Path.Combine(badDir, "2026-13-45_0900_divna");
+        WriteWav(bad + "_sys.wav", 16000, 1, 16000 * 10, truncated: true);
+        var dir = Path.Combine(_tmp, "2026", "09", "2026-09-25_0900_tydenni-sync");
+        Directory.CreateDirectory(dir);
+        var stem = Path.Combine(dir, "2026-09-25_0900_tydenni-sync");
+        WriteWav(stem + "_sys.wav", 16000, 1, 16000 * 10, truncated: true);
+
+        Assert.Equal(2, Orphans.Recover(_tmp, () => null));
+        Assert.StartsWith("2026-09-25T09:00:00", ReadJson(stem + ".json").GetProperty("start").GetString());
+        Assert.True(File.Exists(bad + ".json"));  // its start falls back to the file's time
+    }
+
+    [Fact]
+    public void An_orphan_that_cannot_be_written_is_skipped_and_the_next_one_recovered()
+    {
+        var lockedDir = Path.Combine(_tmp, "2026", "09", "2026-09-24_0900_zamcena");
+        Directory.CreateDirectory(lockedDir);
+        var locked = Path.Combine(lockedDir, "2026-09-24_0900_zamcena");
+        WriteWav(locked + "_sys.wav", 16000, 1, 16000 * 10, truncated: true);
+        Directory.CreateDirectory(locked + ".json");  // the sidecar cannot be written over a folder
+        var dir = Path.Combine(_tmp, "2026", "09", "2026-09-25_0900_tydenni-sync");
+        Directory.CreateDirectory(dir);
+        var stem = Path.Combine(dir, "2026-09-25_0900_tydenni-sync");
+        WriteWav(stem + "_sys.wav", 16000, 1, 16000 * 10, truncated: true);
+
+        Assert.Equal(1, Orphans.Recover(_tmp, () => null));
+        Assert.True(File.Exists(stem + ".json"));
+    }
+
+    [Fact]
+    public void The_duration_of_an_orphan_is_its_longest_track()
+    {
+        // the loopback track joined late (no output at the start): it is the shorter one
+        var dir = Path.Combine(_tmp, "2026", "09", "2026-09-25_0900_pozdni-vystup");
+        Directory.CreateDirectory(dir);
+        var stem = Path.Combine(dir, "2026-09-25_0900_pozdni-vystup");
+        WriteWav(stem + "_sys.wav", 16000, 1, 16000 * 2, truncated: true);
+        WriteWav(stem + "_mic.wav", 16000, 1, 16000 * 30, truncated: true);
+        Assert.Equal(1, Orphans.Recover(_tmp, () => null));
+        Assert.Equal(30, ReadJson(stem + ".json").GetProperty("duration_s").GetInt32());
+    }
+
+    [Fact]
+    public void A_short_orphan_deletes_only_its_own_tracks_and_videos()
+    {
+        var dir = Path.Combine(_tmp, "2026", "09", "2026-09-25_1000_kratka");
+        Directory.CreateDirectory(dir);
+        var stem = Path.Combine(dir, "2026-09-25_1000_kratka");
+        WriteWav(stem + "_sys.wav", 16000, 1, 16000, truncated: true);
+        WriteWav(stem + "_mic.wav", 16000, 1, 16000, truncated: true);
+        File.WriteAllBytes(stem + "_screen1.mp4", new byte[2000]);
+        File.WriteAllText(Path.Combine(dir, "notes.txt"), "moje poznámky");
+
+        Assert.Equal(0, Orphans.Recover(_tmp, () => null));
+        Assert.False(File.Exists(stem + "_sys.wav"));
+        Assert.False(File.Exists(stem + "_mic.wav"));
+        Assert.False(File.Exists(stem + "_screen1.mp4"));
+        Assert.True(File.Exists(Path.Combine(dir, "notes.txt")));  // the folder stays with it
+    }
+
+    [Fact]
+    public void Ffmpeg_is_looked_for_in_the_known_places_before_PATH()
+    {
+        string Exe(params string[] parts)
+        {
+            var p = Path.Combine([_tmp, .. parts, "ffmpeg.exe"]);
+            Directory.CreateDirectory(Path.GetDirectoryName(p)!);
+            File.WriteAllText(p, "");
+            return p;
+        }
+        var env = Exe("env");
+        var app = Path.Combine(_tmp, "app");
+        var bundled = Exe("app", "ffmpeg");
+        var local = Path.Combine(_tmp, "local");
+        var winget = Exe("local", "Microsoft", "WinGet", "Packages", "Gyan.FFmpeg_x", "ffmpeg-7.1", "bin");
+        var onPath = Exe("path");
+        var path = $"{Path.Combine(_tmp, "nothing")};\"{Path.Combine(_tmp, "path")}\"";
+
+        Assert.Equal(env, Mixer.FindFfmpeg(Path.Combine(_tmp, "env"), app, local, path));
+        Assert.Equal(bundled, Mixer.FindFfmpeg(null, app, local, path));
+        File.Delete(bundled);
+        Assert.Equal(winget, Mixer.FindFfmpeg("", app, local, path));
+        Assert.Equal(onPath, Mixer.FindFfmpeg(null, app, null, path));
+        Assert.Null(Mixer.FindFfmpeg(null, app, null, null));
+    }
 }

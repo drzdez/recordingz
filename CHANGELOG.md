@@ -3,6 +3,23 @@
 Notes for each release, newest first, written by hand for the people using it. The heading format is fixed
 (`## <version> – <date>`); a test keeps an entry for the current version.
 
+## 2.0.2 – 2026-10-16
+
+- A recording whose sound can no longer be written (full disk, lost network folder) now warns loudly at once and
+  keeps warning; before, the tray looked fine and the sound piled up in memory until the recording ended.
+- Starting a recording no longer freezes the tray icon while the devices open (slow on a network folder).
+- Recovering recordings left by a crash goes on past a damaged one, and a too-short leftover deletes only its own
+  sound files, not the whole folder.
+- Updates: a stalled download stops after a minute instead of hanging, a broken or old installer is removed from
+  the temp folder, and an update prompt that timed out is offered again (only "No" skips that version).
+- Names, voice prints and transcripts are saved safely: a save during processing no longer loses the other one's
+  change, and a file is never seen half-written. The settings file is written the same way by both apps.
+- Renaming a recording that is being processed or recorded is refused, and a rename that fails half-way is undone.
+- The review page's API takes only recording names (no paths), and an unexpected error is reported to the page
+  instead of dropping the connection. A review server nobody opens stops on its own.
+- Processing says the same on every tab (Mluvčí, Přepis, Zápis), in the words of the processing panel.
+- The capture log is rotated at 5 MB, and the bundled ffmpeg is preferred to one found on PATH.
+
 ## 2.0.1 – 2026-10-15
 
 - The capture app's log now says what it took over from teamsrec 1.x on the first start (the settings and the

@@ -10,6 +10,7 @@ from pathlib import Path
 
 from .config import Config
 from .export import write_exports
+from .fileio import registry_lock, registry_locked
 from .importer import import_file
 from .media import mix_tracks, probe, utc_now_iso
 from .mic_speakers import apply_mic_track
@@ -187,11 +188,46 @@ def rename_recording(cfg: Config, rec: Recording, title: str) -> Recording:
     new_dir = old_dir.with_name(new_stem)
     if new_dir.exists():
         raise RecordingError(f"{new_dir.name}: a recording with this name already exists")
-    old_dir.rename(new_dir)
-    for f in sorted(new_dir.iterdir()):
-        if f.name.startswith(old_stem):
-            f.rename(f.with_name(new_stem + f.name[len(old_stem):]))
-    sc = rec.sidecar
+    done: list[tuple[Path, Path]] = []  # (from, to): undone in reverse when a step fails
+    try:
+        old_dir.rename(new_dir)
+        done.append((old_dir, new_dir))
+        for f in sorted(new_dir.iterdir()):
+            if f.name.startswith(old_stem):
+                to = f.with_name(new_stem + f.name[len(old_stem):])
+                f.rename(to)
+                done.append((f, to))
+        new = Recording(stem_path=new_dir / new_stem, sidecar=_renamed_sidecar(rec.sidecar, title, old_stem, new_stem,
+                                                                                  old_dir, new_dir))
+        new.save_sidecar()
+    except OSError:
+        for src, dst in reversed(done):
+            try:
+                dst.rename(src)
+            except OSError as e:
+                log.error("rename of %s not undone: %s -> %s: %s", old_stem, dst, src, e)
+        raise
+    rec.sidecar = new.sidecar
+    for md in [new.summary_path, *new_dir.glob(f"{new_stem}.summary.*.md")]:
+        if md.exists():
+            _fix_heading(md, title)
+    with registry_lock(cfg.out_dir):
+        vp = Voiceprints.load(cfg.out_dir, cfg.voiceprints.max_prints)
+        touched = False
+        for rows in [*vp.people.values(), *vp.excluded.values()]:
+            for row in rows:
+                if row.get("stem") == old_stem:
+                    row["stem"] = new_stem
+                    touched = True
+        if touched:
+            vp.save()
+    log.info("renamed %s -> %s", old_stem, new_stem)
+    return new
+
+
+def _renamed_sidecar(sidecar: dict, title: str, old_stem: str, new_stem: str, old_dir: Path, new_dir: Path) -> dict:
+    """A copy of the sidecar with the new title and file names (the original stays as it was if the rename fails)."""
+    sc = json.loads(json.dumps(sidecar))
     sc["title"], sc["slug"] = title, new_stem.split("_", 2)[2]
     for t in (sc.get("tracks") or {}).values():
         if isinstance(t, dict) and str(t.get("file", "")).startswith(old_stem):
@@ -203,22 +239,7 @@ def rename_recording(cfg: Config, rec: Recording, title: str) -> Recording:
             scr["file"] = new_stem + scr["file"][len(old_stem):]
     if str(sc.get("origin_path", "")).replace("\\", "/").startswith(str(old_dir).replace("\\", "/")):
         sc["origin_path"] = str(new_dir / (new_stem + Path(sc["origin_path"]).name[len(old_stem):]))
-    new = Recording(stem_path=new_dir / new_stem, sidecar=sc)
-    new.save_sidecar()
-    for md in [new.summary_path, *new_dir.glob(f"{new_stem}.summary.*.md")]:
-        if md.exists():
-            _fix_heading(md, title)
-    vp = Voiceprints.load(cfg.out_dir, cfg.voiceprints.max_prints)
-    touched = False
-    for prints in vp.people.values():
-        for pr in prints:
-            if pr.get("stem") == old_stem:
-                pr["stem"] = new_stem
-                touched = True
-    if touched:
-        vp.save()
-    log.info("renamed %s -> %s", old_stem, new_stem)
-    return new
+    return sc
 
 
 # ---------------------------------------------------------------- remove noise "speakers"
@@ -289,6 +310,7 @@ def minutes_stale(rec: Recording, data: dict | None = None) -> str | None:
         return None
 
 
+@registry_locked
 def merge_same_person(cfg: Config, rec: Recording) -> dict:
     """Fold every group of labels that belongs to one person into a single speaker. Their embeddings are kept
     as voice prints first - the same voice recorded under different conditions is what makes later recognition
@@ -500,9 +522,10 @@ def assign_segments(cfg: Config, rec: Recording, moves: list[dict]) -> int:
         mark_edited(rec)
         # the groups that lost or got replies: a print made from one of them no longer matches it
         touched = {str(m.get("from")) for m in moves if m.get("from")} | {str(m.get("speaker")) for m in moves}
-        vp = Voiceprints.load(cfg.out_dir, cfg.voiceprints.max_prints)
-        if vp.mark_stale(rec.stem, touched | ({new_label} if new_label else set())):
-            vp.save()
+        with registry_lock(cfg.out_dir):
+            vp = Voiceprints.load(cfg.out_dir, cfg.voiceprints.max_prints)
+            if vp.mark_stale(rec.stem, touched | ({new_label} if new_label else set())):
+                vp.save()
     return n
 
 
@@ -834,6 +857,7 @@ def call_partner(cfg: Config, rec: Recording) -> str:
     return ""
 
 
+@registry_locked
 def only_with_step(cfg: Config, rec: Recording, name: str) -> dict:
     """The user confirmed before processing that the call was only them and `name`: every unnamed voice group that
     spoke long enough (UNNAMED_MIN_SECONDS) is that person – also one the voice took for someone else, also two groups
@@ -902,6 +926,7 @@ def recognize_voices(cfg: Config, rec: Recording) -> dict:
     return matches
 
 
+@registry_locked
 def enroll_names(cfg: Config, rec: Recording, names: dict[str, str]) -> int:
     """Store voice prints for labels that just got a person (review page, label-speakers)."""
     if not cfg.voiceprints.enabled or not rec.transcript_path.exists():
@@ -1125,6 +1150,7 @@ def purge_audio(cfg: Config, days: int, *, dry_run: bool = False, now: datetime 
     return out
 
 
+@registry_locked
 def reset_voiceprints(cfg: Config, rec: Recording) -> dict[str, int]:
     """A transcript from scratch redoes the voices too: the prints this recording gave go (only these; the people's
     prints from other recordings stay) and come back from the new transcript when the names are saved."""

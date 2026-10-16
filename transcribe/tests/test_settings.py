@@ -242,3 +242,17 @@ def test_the_config_of_teamsrec_1x_is_copied_once(tmp_path):
     assert new.read_text(encoding="utf-8") == old.read_text(encoding="utf-8") and old.exists(), "a copy, the old stays"
     new.write_text('[recordings]\nout_dir = "E:/x"\n', encoding="utf-8")
     assert migrate_legacy_config(new, old) is False and "E:/x" in new.read_text(encoding="utf-8"), "only once"
+
+def test_an_empty_or_half_written_config_is_not_overwritten(tmp_path):
+    """Review 16. 10., X1: the capture app writing the file at the same moment left it empty or cut off; saving then
+    wrote a file with only the page's keys and every other setting was gone."""
+    p = tmp_path / "recordingz.toml"
+    for text in ("", "\n  \n", '[user]\nname = "Jan'):
+        p.write_text(text, encoding="utf-8")
+        with pytest.raises(settings.SettingsError):
+            settings.write_changes({"summarize.model": "x"}, p)
+        assert p.read_text(encoding="utf-8") == text, "untouched"
+    p.write_text(TOML, encoding="utf-8")
+    settings.write_changes({"summarize.model": "x"}, p)
+    assert tomllib.loads(p.read_text(encoding="utf-8"))["summarize"]["model"] == "x"
+    assert [f.name for f in tmp_path.iterdir()] == ["recordingz.toml"], "no temporary file left behind"

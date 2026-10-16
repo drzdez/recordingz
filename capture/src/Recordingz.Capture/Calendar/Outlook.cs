@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.RegularExpressions;
 using Recordingz.Capture.Core;
+using Recordingz.Capture.Detection;
 
 namespace Recordingz.Capture.Calendar;
 
@@ -22,29 +23,6 @@ public static class Outlook
     public const int TitleWindowS = 7200;
     // difflib.get_close_matches cutoff of the prototype: tolerates a typo or a shortened subject.
     public const double CloseMatchCutoff = 0.8;
-
-    // Titles the Teams meeting window carries before/without a subject (en + cs) and the nav sections of the
-    // main window: they say nothing about which meeting this is, so they must not be matched against subjects.
-    // Copy of the prototype's TEAMS_GENERIC / TEAMS_NAV (is_generic_title); the Teams detection module owns the
-    // canonical list, kept private here so this module compiles on its own.
-    private static readonly HashSet<string> TeamsGeneric = new(StringComparer.Ordinal)
-    {
-        "meeting", "join meeting", "meeting compact view", "compact view", "call", "teams-call",
-        "připojení ke schůzce", "kompaktní zobrazení schůzky", "kompaktní zobrazení", "hovor", "schůzka",
-        "ovládací panel sdílení", "sharing control bar", "screen sharing toolbar", "sdílení obsahu",
-    };
-    private static readonly HashSet<string> TeamsNav = new(StringComparer.Ordinal)
-    {
-        "activity", "chat", "teams", "calendar", "calls", "files", "apps", "copilot",
-        "onedrive", "meet", "viva", "planner", "microsoft teams",
-        "aktivita", "týmy", "kalendář", "hovory", "soubory", "aplikace", "schůzka",
-    };
-
-    internal static bool IsGenericTitle(string? title)
-    {
-        var t = (title ?? "").Trim().ToLowerInvariant();
-        return t.Length == 0 || TeamsGeneric.Contains(t) || TeamsNav.Contains(t) || t.StartsWith("meeting compact", StringComparison.Ordinal);
-    }
 
     private static readonly Regex NonAlnum = new("[^a-z0-9]+", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
@@ -76,7 +54,7 @@ public static class Outlook
     public static (CalendarItem? Item, string Match) Pick(List<CalendarItem> items, DateTime at, string? title,
                                                           int beforeS = BeforeS, int afterS = AfterS)
     {
-        if (!string.IsNullOrEmpty(title) && !IsGenericTitle(title))
+        if (!string.IsNullOrEmpty(title) && !CallDetector.IsGenericTitle(title))
         {
             var t = TitleNorm(title);
             var near = CandidatesAt(items, at, TitleWindowS);

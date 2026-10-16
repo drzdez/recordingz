@@ -104,7 +104,8 @@ from ..voiceprints import Voiceprints, _unit, cosine, speech_seconds
 from .. import exports, timings, trash
 from ..fasttrack import choices, cloud_ready, needs_voices, plans  # the emergency fast track, separate from the local path
 from ..providers.base import Segment
-from ..recording import Recording, RecordingError, iter_recordings, resolve_recording
+from ..fileio import atomic_write_text, registry_locked
+from ..recording import Recording, RecordingError, find_recording, iter_recordings
 from ..speakers import speaker_list
 
 log = logging.getLogger(__name__)
@@ -116,6 +117,7 @@ EXCERPTS_PER_SPEAKER = 2
 RECENT_RECORDINGS = 30
 PAGE = Path(__file__).with_name("index.html")
 IDLE_S = 90.0  # exit this long after the page's last heartbeat (the page pings every 15 s)
+FIRST_CONTACT_S = 600.0  # exit this long after the start when no page has asked anything yet
 MAX_EVENTS = 200   # kept in memory only: the log is a convenience, the files are the truth
 LOCK = Path(tempfile.gettempdir()) / "recordingz-review.json"
 CAPTURE_STATUS = Path(tempfile.gettempdir()) / "recordingz-capture.json"  # written by the capture app on every change
@@ -486,7 +488,7 @@ def _title_of(cfg: Config, stem: str) -> str:
     if not stem:
         return ""
     try:
-        return resolve_recording(stem, cfg.out_dir).title or stem
+        return find_recording(stem, cfg.out_dir).title or stem
     except Exception:
         return stem
 
@@ -734,6 +736,7 @@ def save_title(cfg: Config, rec: Recording, title: str) -> Recording:
     return rename_recording(cfg, rec, title)
 
 
+@registry_locked
 def save_names(cfg: Config, rec: Recording, names: dict) -> dict[str, str]:
     """Write speakers.json with person ids (people created/updated from the fields), regenerate txt/srt.
     Returns {label: person id} of what was written."""
@@ -768,6 +771,7 @@ def save_names(cfg: Config, rec: Recording, names: dict) -> dict[str, str]:
     return clean
 
 
+@registry_locked
 def merge_people(cfg: Config, keep: str, drop: str, stem: str | None = None) -> list[dict]:
     people = People.load(cfg.out_dir, cfg.people_display)
     changed = people.merge(keep, drop, iter_recordings(cfg.out_dir))
@@ -780,7 +784,7 @@ def merge_people(cfg: Config, keep: str, drop: str, stem: str | None = None) -> 
             mark_edited(r)
             do_export(cfg, r)
     if stem and stem not in {r.stem for r in changed}:
-        r = resolve_recording(stem, cfg.out_dir)
+        r = find_recording(stem, cfg.out_dir)
         if r.transcript_path.exists():
             do_export(cfg, r)
     return people.to_json()
@@ -917,10 +921,11 @@ def voice_candidates(cfg: Config, people: People | None = None) -> dict[str, lis
     return out
 
 
+@registry_locked
 def confirm_candidate(cfg: Config, stem: str, label: str, pid: str) -> dict:
     """"Yes, it is them": this one group gets the person for good (as if saved on the page) and its voice
     print is stored. The other groups of the recording stay as they were."""
-    rec = resolve_recording(stem, cfg.out_dir)
+    rec = find_recording(stem, cfg.out_dir)
     if People.load(cfg.out_dir, cfg.people_display).get(pid) is None:
         raise RecordingError(f"unknown person {pid!r}")
     manual = rec.read_json(rec.speakers_path) if rec.speakers_path.exists() else {}
@@ -958,13 +963,14 @@ def _unname_group(rec: Recording, data: dict, label: str) -> str:
     return new
 
 
+@registry_locked
 def reassign_candidate(cfg: Config, stem: str, label: str, pid: str, to_pid: str) -> dict:
     """"It is somebody else": the group gets `to_pid` for good (as if saved on the page), the voice print it gave
     `pid` goes, the new person gets its print, and `pid` is not guessed for it again."""
     people = People.load(cfg.out_dir, cfg.people_display)
     if people.get(to_pid) is None:
         raise RecordingError(f"unknown person {to_pid!r}")
-    rec = resolve_recording(stem, cfg.out_dir)
+    rec = find_recording(stem, cfg.out_dir)
     data = rec.read_json(rec.transcript_path)
     removed = forget_print(cfg, pid, stem, label)
     if not is_label(label):  # a name-tag group: an unnamed label first, so the old name does not stay as the label
@@ -985,11 +991,12 @@ def reassign_candidate(cfg: Config, stem: str, label: str, pid: str, to_pid: str
     return {"ok": True, "label": label, "prints_removed": removed, "prints_added": added}
 
 
+@registry_locked
 def reject_candidate(cfg: Config, stem: str, label: str, pid: str) -> dict:
     """"Not them": the name goes from this group (it is unnamed again), the same guess is not made for it again,
     and a voice print the group gave this person is deleted (a confirmed group was wrong after all). A name-tag
     group (the video, the microphone) becomes an unnamed SPEAKER_NN."""
-    rec = resolve_recording(stem, cfg.out_dir)
+    rec = find_recording(stem, cfg.out_dir)
     removed = forget_print(cfg, pid, stem, label)
     data = rec.read_json(rec.transcript_path)
     if not is_label(label):
@@ -1010,6 +1017,7 @@ def reject_candidate(cfg: Config, stem: str, label: str, pid: str) -> dict:
     return {"ok": True, "label": label, "prints_removed": removed}
 
 
+@registry_locked
 def sample_action(cfg: Config, pid: str, action: str, stem: str, label: str, replace: dict | None = None) -> dict:
     """Lidé → Vzorky pro rozpoznávání. exclude: the print leaves recognition (the name in the meeting stays, the
     print does not come back); include: undo that; add: the group becomes a print – a guessed one is confirmed
@@ -1025,7 +1033,7 @@ def sample_action(cfg: Config, pid: str, action: str, stem: str, label: str, rep
         return {"ok": True}
     if action != "add":
         raise ValueError("action: exclude | include | add")
-    rec = resolve_recording(stem, cfg.out_dir)
+    rec = find_recording(stem, cfg.out_dir)
     data = rec.read_json(rec.transcript_path)
     secs = speech_seconds(data.get("segments") or []).get(label, 0.0)
     if secs < cfg.voiceprints.min_seconds:
@@ -1053,6 +1061,7 @@ def sample_action(cfg: Config, pid: str, action: str, stem: str, label: str, rep
     return {"ok": True, "dropped": [{"stem": a, "label": b} for a, b in dropped]}
 
 
+@registry_locked
 def forget_print(cfg: Config, pid: str, stem: str | None, label: str | None) -> int:
     vp = Voiceprints.load(cfg.out_dir, cfg.voiceprints.max_prints)
     before = vp.count(pid)
@@ -1081,6 +1090,7 @@ def people_rows(cfg: Config) -> dict:
             "path": str(people.path)}
 
 
+@registry_locked
 def _drop_opted_out_prints(cfg: Config, people: People) -> list[str]:
     """Somebody opted out of voice recognition: their prints go right away, not at the next enrolment."""
     vp = Voiceprints.load(cfg.out_dir, cfg.voiceprints.max_prints)
@@ -1093,13 +1103,14 @@ def _drop_opted_out_prints(cfg: Config, people: People) -> list[str]:
     return gone
 
 
+@registry_locked
 def save_people(cfg: Config, rows: list[dict], stem: str | None = None) -> list[dict]:
     people = People.load(cfg.out_dir, cfg.people_display)
     people.replace_all(rows)
     people.save()
     _drop_opted_out_prints(cfg, people)
     if stem:
-        rec = resolve_recording(stem, cfg.out_dir)
+        rec = find_recording(stem, cfg.out_dir)
         if rec.transcript_path.exists():
             do_export(cfg, rec)
     return people_rows(cfg)["people"]  # with the print counts, so the page shows what is left
@@ -1340,24 +1351,18 @@ class ReviewState:
     def write_jobs_file(self, running: bool = True) -> None:
         if not self.jobs_file:
             return
-        with self.jobs_file_lock:  # one writer at a time; a reader (the tray) may hold it for a moment: retry
-            tmp = self.jobs_file.with_suffix(".tmp")
-            for attempt in range(5):
-                try:
-                    tmp.write_text(json.dumps(self.jobs_file_json(running), ensure_ascii=False), encoding="utf-8")
-                    os.replace(tmp, self.jobs_file)
-                    return
-                except OSError as e:
-                    if attempt == 4:
-                        log.warning("jobs status not written: %s", e)
-                    time.sleep(0.05)
+        with self.jobs_file_lock:  # one writer at a time; a reader (the tray) may hold it for a moment: retried
+            try:
+                atomic_write_text(self.jobs_file, json.dumps(self.jobs_file_json(running), ensure_ascii=False))
+            except OSError as e:
+                log.warning("jobs status not written: %s", e)
 
     def _finished(self, job: dict, ok: bool, text: str) -> None:
         """A job ended: remembered for the tray's balloon, with what came out of it."""
         stem = job.get("stem") or ""
         if ok and job.get("name") == "process" and stem:
             try:
-                rec = resolve_recording(stem, self.cfg.out_dir)
+                rec = find_recording(stem, self.cfg.out_dir)
                 text = ("přepis i zápis hotové" if has_minutes(rec)
                         else "přepis hotový; zápis počká, až pojmenujete mluvčí")
             except Exception:
@@ -1710,6 +1715,12 @@ def _handler(state: ReviewState, server_ref: dict):
             log.debug("http " + fmt, *args)
 
         # ---- helpers
+        answered = False  # a response was started for the current request (an error then cannot be sent)
+
+        def send_response(self, code, message=None):
+            self.answered = True
+            super().send_response(code, message)
+
         def _json(self, obj, status=HTTPStatus.OK):
             body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
             self.send_response(status)
@@ -1759,6 +1770,7 @@ def _handler(state: ReviewState, server_ref: dict):
                 self._json({"error": "cizí původ požadavku"}, HTTPStatus.FORBIDDEN)
                 return
             state.seen()
+            self.answered = False
             name, params, known = match_route(method, u.path)
             if name is None:
                 self._json({"error": "method not allowed" if known else "not found"},
@@ -1770,7 +1782,16 @@ def _handler(state: ReviewState, server_ref: dict):
             except (RecordingError, ValueError, KeyError) as e:
                 if method != "GET":
                     state.event(f"{method} {u.path}: {e}", "err")
-                self._json({"error": str(e)}, HTTPStatus.BAD_REQUEST)
+                if not self.answered:
+                    self._json({"error": str(e)}, HTTPStatus.BAD_REQUEST)
+            except Exception as e:  # OSError, LLMError, MediaError ...: still an answer, never a dropped connection
+                log.exception("%s %s failed", method, u.path)
+                if method != "GET":
+                    state.event(f"{method} {u.path}: {e}", "err")
+                if self.answered:
+                    self.close_connection = True  # a half-sent response: the client must not wait for the rest
+                else:
+                    self._json({"error": f"{type(e).__name__}: {e}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
         def do_GET(self):
             self._dispatch("GET")
@@ -1785,7 +1806,7 @@ def _handler(state: ReviewState, server_ref: dict):
             self._dispatch("DELETE")
 
         def _recording(self, stem: str) -> Recording:
-            return resolve_recording(stem, state.cfg.out_dir)
+            return find_recording(stem, state.cfg.out_dir)
 
         # ---- recordings
         def r_page(self, q, body):
@@ -1838,7 +1859,7 @@ def _handler(state: ReviewState, server_ref: dict):
             title = str(body.get("title") or "").strip()
             if not title:
                 raise ValueError("title: an empty title is not a title")
-            rec = save_title(state.cfg, self._recording(stem), title)
+            rec = save_title(state.cfg, self._idle_recording(stem), title)
             state.event(f"{rec.stem}: název uložen („{rec.title}“)", "ok", rec.stem)
             self._json({"ok": True, "stem": rec.stem, "title": rec.title})
 
@@ -1900,7 +1921,9 @@ def _handler(state: ReviewState, server_ref: dict):
             self._json({"ok": True})
 
         # ---- the trash: whole meetings
-        def _deletable(self, stem: str) -> Recording:
+        def _idle_recording(self, stem: str) -> Recording:
+            """The recording, when no job runs or waits for it and the capture app is not recording it (deleting or
+            renaming it would pull its files from under them)."""
             rec = self._recording(stem)
             if queue_place := state.job_of(rec.stem):
                 raise ValueError(f"{rec.stem}: {queue_place} – nejdřív ho zrušte")
@@ -1909,13 +1932,13 @@ def _handler(state: ReviewState, server_ref: dict):
             return rec
 
         def r_trash_recording(self, q, body, stem):
-            rec = self._deletable(stem)
+            rec = self._idle_recording(stem)
             trash.move_to_trash(state.cfg, rec)
             state.event(f"{rec.stem}: „{rec.title}“ přesunuto do koše", "info")
             self._json({"ok": True, "trash": trash_state(state.cfg)})
 
         def r_delete_recording(self, q, body, stem):
-            rec = self._deletable(stem)
+            rec = self._idle_recording(stem)
             trash.delete_now(state.cfg, rec)
             state.event(f"{rec.stem}: „{rec.title}“ smazáno natrvalo", "info")
             self._json({"ok": True})
@@ -2250,17 +2273,26 @@ def _unload_ollama(cfg: Config) -> None:
         log.debug("ollama unload: %s", e)
 
 
-def _idle_watchdog(state: ReviewState, server: ThreadingHTTPServer, idle_s: float) -> None:
+def _idle_watchdog(state: ReviewState, server: ThreadingHTTPServer, idle_s: float,
+                   first_contact_s: float | None = None) -> None:
     """Stop the server once the page has gone quiet (tab closed). Never while a job runs, and never while a page
     holds its event stream open: a hidden or minimized window throttles its timers, so its pings may stop for
     minutes (2026-10-02: the desktop window lost its server and did not show new recordings). A stream whose page
-    is gone fails on the next keepalive and unsubscribes."""
+    is gone fails on the next keepalive and unsubscribes. A server no page has contacted at all stops after
+    FIRST_CONTACT_S (a window that never opened, a crashed starter)."""
+    first_contact_s = FIRST_CONTACT_S if first_contact_s is None else first_contact_s
+    started = time.monotonic()
     while True:
-        time.sleep(min(5.0, idle_s / 3))
+        time.sleep(min(5.0, idle_s / 3, first_contact_s / 3))
         with state.lock:
             if state.subscribers:
                 state.last_seen = time.monotonic()
-        if state.last_seen and not state.busy and time.monotonic() - state.last_seen > idle_s:
+        now = time.monotonic()
+        if not state.busy and not state.last_seen and now - started > first_contact_s:
+            log.info("no page came in %.0f s, stopping", first_contact_s)
+            threading.Thread(target=server.shutdown, daemon=True).start()
+            return
+        if state.last_seen and not state.busy and now - state.last_seen > idle_s:
             log.info("review page closed, stopping")
             threading.Thread(target=server.shutdown, daemon=True).start()
             return

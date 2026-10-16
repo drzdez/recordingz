@@ -1,4 +1,7 @@
 using Recordingz.Capture.App;
+using Recordingz.Capture.Audio;
+using Recordingz.Capture.Config;
+using Recordingz.Capture.Contract;
 using Recordingz.Capture.Core;
 using Recordingz.Capture.Settings;
 
@@ -124,7 +127,7 @@ public class AppTests
     [InlineData("upgraded", "onsite_upgraded")]
     [InlineData("something else", "user_stop")]
     public void StopReason_maps_to_the_contract(string reason, string code) =>
-        Assert.Equal(code, AppLogic.StopReasonCode(reason));
+        Assert.Equal(code, StopReasons.ToContract(reason));
 
     [Fact]
     public void Source_of_a_recording()
@@ -144,6 +147,112 @@ public class AppTests
         Assert.Equal("⚠ 3 min — BEZ ZVUKU: mikrofon je potichu",
                      AppLogic.StatusText(true, 180, "x", "mikrofon je potichu", false));
         Assert.Equal("Idle — waiting for a call", AppLogic.StatusText(false, 0, "", "stale warning", false));
+        Assert.Equal("● Starting the recording…", AppLogic.StatusText(false, 0, "", null, true, starting: true));
+    }
+
+    // ------------------------------------------------------------------ start outside the lock
+    /// <summary>A monitor loop on a temp folder whose device start blocks until released (WASAPI init can take
+    /// seconds); on-site with a given mic so nothing asks the OS, Outlook off.</summary>
+    private sealed class BlockedStart : IDisposable
+    {
+        public readonly string Dir = Path.Combine(Path.GetTempPath(), "recordingz-start-" + Guid.NewGuid().ToString("N"));
+        public readonly FakeNotifier Notes = new();
+        public readonly MonitorLoop Loop;
+        public readonly ManualResetEventSlim Opening = new(), Release = new();
+        public Task<Recorder?> Start = Task.FromResult<Recorder?>(null);
+
+        public BlockedStart()
+        {
+            Directory.CreateDirectory(Dir);
+            Loop = new MonitorLoop(new AppConfig { OutDir = Dir, UseOutlook = false }, SystemClock.Instance, Notes)
+            {
+                StatusPath = Path.Combine(Dir, "capture.json"),  // not the running app's %TEMP% file
+            };
+            Loop.OpenDevices = _ =>
+            {
+                var folder = Directory.GetDirectories(Dir, "*_porada", SearchOption.AllDirectories).Single();
+                var wav = Path.Combine(folder, Path.GetFileName(folder) + "_mic.wav");
+                File.WriteAllText(wav, "");
+                Opening.Set();
+                Release.Wait();
+                return [wav];
+            };
+        }
+
+        public void Begin()
+        {
+            Start = Task.Run(() => Loop.StartRecording("Porada", manual: true, onsite: true, mic: ""));
+            Assert.True(Opening.Wait(5000), "the start reached the devices");
+        }
+
+        public void Dispose()
+        {
+            Release.Set();
+            Loop.Dispose();
+            try { Directory.Delete(Dir, true); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
+    public async Task The_tray_reads_the_state_while_the_devices_of_a_new_recording_open()
+    {
+        using var s = new BlockedStart();
+        s.Begin();
+        // a TimeoutException here = Status() waited for the device start (the tray froze)
+        var status = await Task.Run(s.Loop.Status).WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.Equal("● Starting the recording…", status);
+        Assert.True(s.Loop.Recording);  // Stop is offered, an installer waits
+        Assert.Null(s.Loop.StartRecording("Druhá", manual: true, onsite: true, mic: ""));  // one at a time
+
+        s.Release.Set();
+        var rec = await s.Start;
+        Assert.NotNull(rec);
+        Assert.StartsWith("● REC 0 min — Porada", s.Loop.Status());
+        s.Loop.Stop("aborted");
+        Assert.False(s.Loop.Recording);
+    }
+
+    [Fact]
+    public async Task A_stop_while_the_recording_starts_drops_it_once_it_is_up()
+    {
+        using var s = new BlockedStart();
+        s.Begin();
+        await Task.Run(() => s.Loop.Stop("quit")).WaitAsync(TimeSpan.FromSeconds(2));  // not waiting for the start
+
+        s.Release.Set();
+        Assert.Null(await s.Start);
+        Assert.False(s.Loop.Recording);
+        Assert.Equal("Idle — waiting for a call", s.Loop.Status());
+        Assert.Empty(Directory.GetDirectories(s.Dir, "*_porada", SearchOption.AllDirectories));  // nothing kept
+        Assert.Empty(s.Notes.Notes);
+    }
+
+    [Fact]
+    public void A_large_log_is_moved_aside_at_start_unless_the_file_is_held()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "recordingz-log-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var log = Path.Combine(dir, "recordingz.log");
+            File.WriteAllText(log, new string('x', 100));
+            FileLog.Rotate(log, maxBytes: 200);
+            Assert.True(File.Exists(log));  // small enough
+            FileLog.Rotate(log, maxBytes: 50);
+            Assert.False(File.Exists(log));
+            Assert.Equal(100, new FileInfo(log + ".1").Length);
+
+            File.WriteAllText(log, new string('y', 100));
+            using (new FileStream(log, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))  // the transcribe part reads it
+                FileLog.Rotate(log, maxBytes: 50);  // no exception: the next start rotates
+            Assert.True(File.Exists(log));
+            FileLog.Rotate(log, maxBytes: 50);
+            Assert.Equal(new string('y', 100), File.ReadAllText(log + ".1"));  // the older .1 is replaced
+        }
+        finally
+        {
+            try { Directory.Delete(dir, true); } catch (IOException) { }
+        }
     }
 
     [Fact]

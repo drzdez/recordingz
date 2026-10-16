@@ -1,5 +1,4 @@
 using System.Buffers.Binary;
-using System.Text.RegularExpressions;
 using Recordingz.Capture.Contract;
 using Recordingz.Capture.Core;
 
@@ -12,8 +11,6 @@ public static class Orphans
     public const int ScreenFps = 2;         // fallback metadata of videos whose capture process never reported
     public const int ScreenW = 1600, ScreenH = 900;
 
-    private static readonly Regex StemPattern = new(@"^(\d{4})-(\d{2})-(\d{2})_(\d{2})(\d{2})_(.*)$");
-
     /// <summary>Recordings that have audio but no sidecar were cut by a crash or a kill: repair the WAV headers,
     /// write the sidecar (stop_reason app_crash) and the mix, so nothing recorded is lost. Runs once at startup,
     /// so no recording is in progress. Returns how many were recovered.</summary>
@@ -23,79 +20,100 @@ public static class Orphans
         var n = 0;
         foreach (var stem in AudioStems(outDir))
         {
-            var dir = Path.GetDirectoryName(stem)!;
-            var sysfile = File.Exists(stem + "_sys.wav") ? stem + "_sys.wav" : stem + "_mic.wav";
-            if (File.Exists(stem + ".json"))
-                continue;
-            var audio = new[] { stem + "_sys.wav", stem + "_mic.wav" }
-                .Where(p => File.Exists(p) && RepairWav(p)).ToList();
-            if (audio.Count == 0)
-                continue;
-            double dur;
-            var tracks = new Dictionary<string, SidecarTrack>();
             try
             {
-                var first = ReadHeader(audio[0]);
-                dur = first.Frames / (double)first.SampleRate;
-                foreach (var p in audio)
-                {
-                    var h = ReadHeader(p);
-                    tracks[p.EndsWith("_mic.wav", StringComparison.OrdinalIgnoreCase) ? "mic" : "sys"] =
-                        new SidecarTrack { File = Path.GetFileName(p), SampleRate = h.SampleRate, Channels = h.Channels };  // device unknown after a crash
-                }
+                if (RecoverOne(stem, findFfmpeg))
+                    n++;
             }
-            catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException)
+            catch (Exception e)  // one broken recording must not keep the others from being recovered
             {
-                Log.Warn($"orphan {Path.GetFileName(stem)} unreadable: {e.Message}");
-                continue;
+                Log.Warn($"orphan {Path.GetFileName(stem)} not recovered: {e.Message}");
             }
-            if (dur < MinDurationS)
-            {
-                try
-                {
-                    foreach (var f in Directory.EnumerateFiles(dir))
-                        File.Delete(f);
-                    Directory.Delete(dir);
-                }
-                catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
-                Log.Info($"orphan {Path.GetFileName(stem)} deleted ({dur:0} s)");
-                continue;
-            }
-            var stemName = Path.GetFileName(stem);
-            var m = StemPattern.Match(stemName);
-            var started = m.Success
-                ? new DateTime(int.Parse(m.Groups[1].Value), int.Parse(m.Groups[2].Value), int.Parse(m.Groups[3].Value),
-                               int.Parse(m.Groups[4].Value), int.Parse(m.Groups[5].Value), 0)
-                : File.GetLastWriteTime(sysfile);
-            var title = (m.Success ? m.Groups[6].Value : stemName).Replace("-", " ");
-            var ff = Mixer.MixWithFfmpeg ? findFfmpeg() : null;
-            var mix = ff is not null ? Mixer.Mix(ff, stem, audio) : null;
-            var sidecar = new Sidecar
-            {
-                Format = Versions.FormatVersion,
-                App = Versions.AppName,
-                AppVersion = Versions.AppVersion,
-                Title = title,
-                Slug = Naming.Slug(title),
-                Source = "live",
-                Start = started,
-                End = started.AddSeconds(dur),
-                DurationS = (int)Math.Round(dur),
-                StopReason = StopReasons.AppCrash,
-                Recovered = true,
-                Tracks = tracks,
-                TeamsWindowsSeen = new List<string>(),
-            };
-            if (mix is not null)
-                sidecar.Mix = new SidecarMix { File = Path.GetFileName(mix), SampleRate = Mixer.MixSampleRate, Channels = Mixer.MixChannels };
-            var screens = ScreensOnDisk(stem);
-            if (screens.Count > 0)
-                sidecar.Screens = screens;
-            sidecar.Write(stem + ".json");
-            Log.Warn($"recovered orphan recording {stemName} ({dur:0} s, cut by a crash)");
-            n++;
         }
         return n;
+    }
+
+    private static bool RecoverOne(string stem, Func<string?> findFfmpeg)
+    {
+        var sysfile = File.Exists(stem + "_sys.wav") ? stem + "_sys.wav" : stem + "_mic.wav";
+        if (File.Exists(stem + ".json"))
+            return false;
+        var audio = new[] { stem + "_sys.wav", stem + "_mic.wav" }
+            .Where(p => File.Exists(p) && RepairWav(p)).ToList();
+        if (audio.Count == 0)
+            return false;
+        double dur = 0;
+        var tracks = new Dictionary<string, SidecarTrack>();
+        try
+        {
+            foreach (var p in audio)
+            {
+                var h = ReadHeader(p);
+                dur = Math.Max(dur, h.Frames / (double)h.SampleRate);  // a track added later is shorter
+                tracks[p.EndsWith("_mic.wav", StringComparison.OrdinalIgnoreCase) ? "mic" : "sys"] =
+                    new SidecarTrack { File = Path.GetFileName(p), SampleRate = h.SampleRate, Channels = h.Channels };  // device unknown after a crash
+            }
+        }
+        catch (Exception e) when (e is IOException or InvalidDataException or UnauthorizedAccessException)
+        {
+            Log.Warn($"orphan {Path.GetFileName(stem)} unreadable: {e.Message}");
+            return false;
+        }
+        var stemName = Path.GetFileName(stem);
+        if (dur < MinDurationS)
+        {
+            DeleteShort(stem);
+            Log.Info($"orphan {stemName} deleted ({dur:0} s)");
+            return false;
+        }
+        var (started, title) = Naming.ParseStem(stemName) ?? (File.GetLastWriteTime(sysfile), stemName.Replace("-", " "));
+        var ff = Mixer.MixWithFfmpeg ? findFfmpeg() : null;
+        var mix = ff is not null ? Mixer.Mix(ff, stem, audio) : null;
+        var sidecar = new Sidecar
+        {
+            Format = Versions.FormatVersion,
+            App = Versions.AppName,
+            AppVersion = Versions.AppVersion,
+            Title = title,
+            Slug = Naming.Slug(title),
+            Source = "live",
+            Start = started,
+            End = started.AddSeconds(dur),
+            DurationS = (int)Math.Round(dur),
+            StopReason = StopReasons.AppCrash,
+            Recovered = true,
+            Tracks = tracks,
+            TeamsWindowsSeen = new List<string>(),
+        };
+        if (mix is not null)
+            sidecar.Mix = new SidecarMix { File = Path.GetFileName(mix), SampleRate = Mixer.MixSampleRate, Channels = Mixer.MixChannels };
+        var screens = ScreensOnDisk(stem);
+        if (screens.Count > 0)
+            sidecar.Screens = screens;
+        sidecar.Write(stem + ".json");
+        Log.Warn($"recovered orphan recording {stemName} ({dur:0} s, cut by a crash)");
+        return true;
+    }
+
+    /// <summary>A recording too short to keep: its audio tracks and window videos go, anything else in the folder
+    /// (notes, a file the user put there) stays, and so does the folder then.</summary>
+    private static void DeleteShort(string stem)
+    {
+        var dir = Path.GetDirectoryName(stem)!;
+        var name = Path.GetFileName(stem);
+        try
+        {
+            var files = new[] { stem + "_sys.wav", stem + "_mic.wav" }.Where(File.Exists)
+                .Concat(Directory.EnumerateFiles(dir, name + "_screen*.mp4")).ToList();
+            foreach (var f in files)
+                File.Delete(f);
+            if (!Directory.EnumerateFileSystemEntries(dir).Any())
+                Directory.Delete(dir);
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Log.Warn($"orphan {name} not deleted: {e.Message}");
+        }
     }
 
     /// <summary>The stems of &lt;out&gt;/[0-9]*/[0-9]*/*/*_sys.wav and *_mic.wav, sorted: a recording may have the

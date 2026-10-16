@@ -122,7 +122,7 @@ def test_review_page(script, tmp_path, monkeypatch):
                 replies.cache_path(r).write_text(json.dumps({"format": 1, "model": cfg.transcribe.diarize_model,
                                                              "replies": vecs}), encoding="utf-8")
             return
-        rec = review.resolve_recording(args[1], tmp_path)
+        rec = review.find_recording(args[1], tmp_path)
         if args[0] == "process":
             review.do_process(cfg, rec, force="--force" in args)
         elif args[0] == "summary":

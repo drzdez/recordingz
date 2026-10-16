@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 from .config import Config
+from .fileio import registry_lock
 from .recording import Recording, RecordingError, is_sidecar
 
 log = logging.getLogger(__name__)
@@ -30,18 +31,30 @@ def _size(folder: Path) -> int:
 
 def _forget_prints(cfg: Config, stem: str) -> None:
     from .voiceprints import Voiceprints
-    vp = Voiceprints.load(cfg.out_dir, cfg.voiceprints.max_prints)
-    if vp.forget_stem(stem):
-        vp.save()
+    with registry_lock(cfg.out_dir):
+        vp = Voiceprints.load(cfg.out_dir, cfg.voiceprints.max_prints)
+        if vp.forget_stem(stem):
+            vp.save()
+
+
+def _own_folder(cfg: Config, rec: Recording) -> str:
+    """The recording's folder relative to out_dir (YYYY/MM/<stem>); anything else is refused before it is touched."""
+    try:
+        rel = rec.dir.resolve().relative_to(cfg.out_dir.resolve())
+    except ValueError:
+        raise RecordingError(f"{rec.dir} is not a recording folder under {cfg.out_dir}") from None
+    if len(rel.parts) != 3 or rel.parts[0] == TRASH:
+        raise RecordingError(f"{rec.dir} is not a recording folder under {cfg.out_dir}")
+    return rel.as_posix()
 
 
 def move_to_trash(cfg: Config, rec: Recording, now: datetime | None = None) -> Path:
     """The recording's folder into the trash; the voice prints stay until it is deleted for good."""
+    origin = _own_folder(cfg, rec)
     target = trash_dir(cfg) / rec.dir.name
     if target.exists():  # the same meeting trashed before and restored by hand: the older copy goes
         shutil.rmtree(target)
     target.parent.mkdir(parents=True, exist_ok=True)
-    origin = rec.dir.relative_to(cfg.out_dir).as_posix()
     shutil.move(str(rec.dir), str(target))
     (target / STAMP).write_text(json.dumps({"stem": rec.stem, "title": rec.title, "start": rec.sidecar.get("start"),
                                             "from": origin,
@@ -53,6 +66,7 @@ def move_to_trash(cfg: Config, rec: Recording, now: datetime | None = None) -> P
 
 def delete_now(cfg: Config, rec: Recording) -> None:
     """The recording deleted for good, without the trash: its folder and its voice prints."""
+    _own_folder(cfg, rec)
     shutil.rmtree(rec.dir)
     _forget_prints(cfg, rec.stem)
     log.info("%s: deleted for good", rec.stem)

@@ -369,10 +369,12 @@ public sealed class TrayApp : ApplicationContext, INotifier
         }
         Task.Run(async () =>
         {
-            if (!Dialogs.YesNo($"Nainstalovat recordingz {rel.Version}? Teď máte {Versions.AppVersion}.\n\n" +
-                               "Aplikace se na chvíli ukončí a po instalaci se znovu spustí.", timeoutS: 120))
+            var answer = Dialogs.AskYesNo($"Nainstalovat recordingz {rel.Version}? Teď máte {Versions.AppVersion}.\n\n" +
+                                          "Aplikace se na chvíli ukončí a po instalaci se znovu spustí.", timeoutS: 120);
+            if (answer != true)
             {
-                Updater.Declined = rel.Version;
+                if (UpdateLogic.Declines(answer))  // a box that closed by itself offers the version again
+                    Updater.Declined = rel.Version;
                 return;
             }
             if (_loop.Recording)  // a call may have started while the box was open

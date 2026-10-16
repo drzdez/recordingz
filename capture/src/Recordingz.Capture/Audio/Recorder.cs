@@ -38,6 +38,7 @@ public sealed class Recorder : IAudioSource, IDisposable
     private long _bytesReceived;
     private volatile bool _heardSys, _heardMic;
     private int _reopens;
+    private string? _writeFailed;
 
     public Recorder(string stemPath, bool withMic, bool micOnly, string micName, IClock clock)
     {
@@ -70,6 +71,7 @@ public sealed class Recorder : IAudioSource, IDisposable
     public bool HeardSys => _heardSys;  // anything but digital silence arrived on the loopback
     public bool HeardMic => _heardMic;  // ... and on the microphone
     public int Reopens => Volatile.Read(ref _reopens);
+    public string? WriteFailed => Volatile.Read(ref _writeFailed);  // a WAV file is no longer written (disk full?)
 
     public IReadOnlyDictionary<string, TrackInfo> Tracks
     {
@@ -349,7 +351,11 @@ public sealed class Recorder : IAudioSource, IDisposable
             CloseCapture(t);
             throw;
         }
-        t.Writer = new Thread(() => WriterLoop(t, wav)) { IsBackground = true, Name = $"wav-{name}" };
+        t.Writer = new Thread(() =>
+        {
+            if (WriteChunks(t.Queue, wav, t.Rate, t.Channels, t.Name, t.Path) is { } error)
+                Interlocked.CompareExchange(ref _writeFailed, $"{System.IO.Path.GetFileName(t.Path)}: {error}", null);
+        }) { IsBackground = true, Name = $"wav-{name}" };
         t.Writer.Start();
         _state[name] = t;
         UseDevice(name, t);
@@ -411,7 +417,8 @@ public sealed class Recorder : IAudioSource, IDisposable
         }
     }
 
-    /// <summary>The capture callback: never blocks (the queue is unbounded, the writer thread does the IO).</summary>
+    /// <summary>The capture callback: never blocks (the queue is unbounded, the writer thread does the IO). A queue
+    /// whose writer failed takes nothing more (WriteChunks).</summary>
     private void OnData(Track t, bool isSys, SampleFormat fmt, int rate, WaveInEventArgs e)
     {
         if (e.BytesRecorded <= 0)
@@ -425,7 +432,7 @@ public sealed class Recorder : IAudioSource, IDisposable
         }
         catch (InvalidOperationException)
         {
-            return;  // stopping: the writer is already closed
+            return;  // stopping, or the writer failed: the file is closed
         }
         Interlocked.Add(ref _bytesReceived, pcm.Length);
         double now = _clock.Seconds;
@@ -458,24 +465,38 @@ public sealed class Recorder : IAudioSource, IDisposable
         while (frames > 0)
         {
             int n = (int)Math.Min(frames, t.Rate);
-            t.Queue.Add(new Chunk(new byte[n * frameBytes], t.Rate));
+            try
+            {
+                t.Queue.Add(new Chunk(new byte[n * frameBytes], t.Rate));
+            }
+            catch (InvalidOperationException)
+            {
+                return;  // the writer failed: it takes nothing more
+            }
             frames -= n;
         }
     }
 
-    private static void WriterLoop(Track t, WaveFileWriter wav)
+    /// <summary>The writer thread: chunks from the queue into the WAV file, the sound of a device with another rate
+    /// converted to the file's. Returns null when the queue ended (Stop), else why writing failed (a full or
+    /// vanished disk). A failed writer closes the queue and drops what it holds: the capture keeps delivering, and
+    /// the sound of the remaining hours must not pile up in memory unseen (~290 KB/s, up to 4 h). The watchdog
+    /// tells the user (IAudioSource.WriteFailed).</summary>
+    internal static string? WriteChunks(BlockingCollection<Chunk> queue, WaveFileWriter wav, int rate, int channels,
+                                        string name, string path)
     {
         long lastFlush = Environment.TickCount64;
         RateConverter? conv = null;  // the sound of a device with another rate than the file's
+        string? failed = null;
         try
         {
-            foreach (var chunk in t.Queue.GetConsumingEnumerable())
+            foreach (var chunk in queue.GetConsumingEnumerable())
             {
                 var data = chunk.Data;
-                if (chunk.Rate != t.Rate)
+                if (chunk.Rate != rate)
                 {
                     if (conv == null || conv.InRate != chunk.Rate)
-                        conv = new RateConverter(chunk.Rate, t.Rate, t.Channels);
+                        conv = new RateConverter(chunk.Rate, rate, channels);
                     data = conv.Convert(data);
                 }
                 wav.Write(data, 0, data.Length);
@@ -490,7 +511,12 @@ public sealed class Recorder : IAudioSource, IDisposable
         }
         catch (Exception e)
         {
-            Log.Error($"{t.Name}: writing {t.Path} failed: {e.Message}");
+            failed = e.Message;
+            Log.Error($"{name}: writing {path} failed: {e.Message}");
+            queue.CompleteAdding();
+            while (queue.TryTake(out _))
+            {
+            }
         }
         finally
         {
@@ -500,9 +526,10 @@ public sealed class Recorder : IAudioSource, IDisposable
             }
             catch (Exception e)
             {
-                Log.Error($"{t.Name}: closing {t.Path} failed: {e.Message}");
+                Log.Error($"{name}: closing {path} failed: {e.Message}");
             }
         }
+        return failed;
     }
 
 }

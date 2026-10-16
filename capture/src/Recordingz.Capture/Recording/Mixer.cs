@@ -12,27 +12,21 @@ public static class Mixer
     public const int MixSampleRate = 16000;
     public const int MixChannels = 1;
 
-    /// <summary>ffmpeg.exe: on PATH, in RECORDINGZ_FFMPEG_DIR, or where `winget install Gyan.FFmpeg` puts it
-    /// (winget does not always add it to PATH for already running processes). Null when none exists.</summary>
-    public static string? FindFfmpeg()
+    /// <summary>ffmpeg.exe: in RECORDINGZ_FFMPEG_DIR, the one the suite MSI brings, where `winget install
+    /// Gyan.FFmpeg` puts it (winget does not always add it to PATH for already running processes), else on PATH.
+    /// The known places come first: an old or broken ffmpeg somewhere on PATH must not win over them. Null when
+    /// none exists.</summary>
+    public static string? FindFfmpeg() =>
+        FindFfmpeg(Environment.GetEnvironmentVariable("RECORDINGZ_FFMPEG_DIR"), AppContext.BaseDirectory,
+                   Environment.GetEnvironmentVariable("LOCALAPPDATA"), Environment.GetEnvironmentVariable("PATH"));
+
+    internal static string? FindFfmpeg(string? envDir, string appDir, string? localAppData, string? path)
     {
-        var path = Environment.GetEnvironmentVariable("PATH") ?? "";
-        foreach (var dir in path.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
-        {
-            try
-            {
-                var c = Path.Combine(dir.Trim().Trim('"'), "ffmpeg.exe");
-                if (File.Exists(c))
-                    return c;
-            }
-            catch (ArgumentException) { }  // a malformed PATH entry must not break the lookup
-        }
         var cands = new List<string>();
-        var envDir = Environment.GetEnvironmentVariable("RECORDINGZ_FFMPEG_DIR");
         if (!string.IsNullOrEmpty(envDir))
             cands.Add(Path.Combine(envDir, "ffmpeg.exe"));
-        cands.Add(Path.Combine(AppContext.BaseDirectory, "ffmpeg", "ffmpeg.exe"));  // the suite MSI brings its own
-        var local = Environment.GetEnvironmentVariable("LOCALAPPDATA") ?? "";
+        cands.Add(Path.Combine(appDir, "ffmpeg", "ffmpeg.exe"));  // the suite MSI brings its own
+        var local = localAppData ?? "";
         var packages = Path.Combine(local, "Microsoft", "WinGet", "Packages");
         try
         {
@@ -42,6 +36,14 @@ public static class Mixer
                         cands.Add(Path.Combine(ver, "bin", "ffmpeg.exe"));
         }
         catch (Exception e) when (e is IOException or UnauthorizedAccessException) { }
+        foreach (var dir in (path ?? "").Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries))
+        {
+            try
+            {
+                cands.Add(Path.Combine(dir.Trim().Trim('"'), "ffmpeg.exe"));
+            }
+            catch (ArgumentException) { }  // a malformed PATH entry must not break the lookup
+        }
         return cands.FirstOrDefault(File.Exists);
     }
 

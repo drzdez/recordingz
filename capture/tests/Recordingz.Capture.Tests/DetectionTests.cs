@@ -109,6 +109,24 @@ public class DetectionTests
         Assert.Equal(expected, CallDetector.IsGenericTitle(title));
 
     [Fact]
+    public void IsGenericTitle_does_not_depend_on_the_culture()
+    {
+        // the finalizer and the calendar used to have their own copies, one with a culture-sensitive StartsWith
+        var before = System.Globalization.CultureInfo.CurrentCulture;
+        try
+        {
+            System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo("tr-TR");
+            Assert.True(CallDetector.IsGenericTitle("MEETING COMPACT VIEW (2)"));
+            Assert.True(CallDetector.IsGenericTitle("Kompaktní zobrazení schůzky"));
+            Assert.False(CallDetector.IsGenericTitle("\u00admeeting compact view"));  // ordinal: an ignorable character counts
+        }
+        finally
+        {
+            System.Globalization.CultureInfo.CurrentCulture = before;
+        }
+    }
+
+    [Fact]
     public void MeetingWindowAndPrejoinTitles()
     {
         Assert.True(CallDetector.IsPrejoinTitle("Připojení ke schůzce | X | Microsoft Teams"));

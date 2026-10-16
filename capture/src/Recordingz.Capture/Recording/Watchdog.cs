@@ -79,6 +79,11 @@ public sealed class Watchdog
     public void Tick(IAudioSource rec, double elapsedS, bool playback)
     {
         double now = _clock.Seconds;
+        if (rec.WriteFailed is { } failed)  // first and in every mode: the streams still deliver and look healthy
+        {
+            WarnWriteFailed(failed, now);
+            return;
+        }
         if (playback || elapsedS < AudioStallS + 5)
             return;
         ReopenResult(rec, now);
@@ -125,6 +130,21 @@ public sealed class Watchdog
             SetWarned(null);
             _notifier.Notify("Zvuk se obnovil, nahrávání pokračuje.");
         }
+    }
+
+    /// <summary>A WAV file is no longer written (a full or vanished disk): the rest of the meeting is lost while the
+    /// devices keep delivering, so nothing else would notice. Repeated like the "no audio" alarm; no all-clear, the
+    /// file stays closed.</summary>
+    private void WarnWriteFailed(string failed, double now)
+    {
+        string problem = $"zápis na disk selhal ({failed})";
+        if (problem == Warned && now - _warnedAt <= AudioRewarnS)
+            return;
+        SetWarned(problem);
+        _warnedAt = now;
+        Log.Warn($"audio watchdog: {problem}");
+        _notifier.Notify($"Nahrávka se NEUKLÁDÁ: {problem}. Zkontrolujte místo na disku.");
+        _notifier.Beep();
     }
 
     /// <summary>On site only the room microphone is recorded: a stall is reopened, and a microphone without even

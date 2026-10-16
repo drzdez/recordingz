@@ -39,18 +39,26 @@ public static class Dialogs
     internal static bool Answer(int result, bool defaultYes) =>
         result == IDYES || (result != IDNO && defaultYes);
 
+    /// <summary>Maps a MessageBoxTimeout result to the button pressed: null = none (timed out or an error).</summary>
+    internal static bool? Choice(int result) => result == IDYES ? true : result == IDNO ? false : null;
+
     /// <summary>Native Yes/No box with a timeout (ask_yes_no). On timeout the default wins.</summary>
-    public static bool YesNo(string text, int timeoutS = 60, bool defaultYes = false, string caption = "recordingz")
+    public static bool YesNo(string text, int timeoutS = 60, bool defaultYes = false, string caption = "recordingz") =>
+        AskYesNo(text, timeoutS, defaultYes, caption) ?? defaultYes;
+
+    /// <summary>Like YesNo, but tells a box nobody answered (null: timed out or failed, the user was away) from a
+    /// No, for a decision that is remembered.</summary>
+    public static bool? AskYesNo(string text, int timeoutS = 60, bool defaultYes = false, string caption = "recordingz")
     {
         uint flags = MB_YESNO | MB_ICONQUESTION | MB_SETFOREGROUND | MB_TOPMOST | (defaultYes ? 0 : MB_DEFBUTTON2);
         try
         {
-            return Answer(Box(text, caption, flags, timeoutS), defaultYes);
+            return Choice(Box(text, caption, flags, timeoutS));
         }
         catch (Exception e)
         {
             FileLog.Exception("yes/no box", e);
-            return defaultYes;
+            return null;
         }
     }
 

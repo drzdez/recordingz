@@ -182,6 +182,38 @@ public sealed class ConfigTests : IDisposable
     }
 
     [Fact]
+    public void A_save_replaces_the_file_in_one_step_and_leaves_no_temp_file()
+    {
+        TomlEditor.Set(_path, new Dictionary<string, IDictionary<string, object>>
+        {
+            ["capture"] = new Dictionary<string, object> { ["onsite_mic"] = "Pole" },
+        });
+        Assert.Equal("Pole", Tbl(Parsed(), "capture")["onsite_mic"]);
+        Assert.Contains("[transcribe]", Text());
+        Assert.Equal([_path], Directory.GetFiles(_dir));
+    }
+
+    [Fact]
+    public async Task A_save_waits_briefly_for_a_reader_that_holds_the_file()
+    {
+        var reader = new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);  // no delete sharing
+        var release = Task.Run(async () => { await Task.Delay(150); reader.Dispose(); });
+        const string toml = "[capture]\nonsite_mic = \"Pole\"\n";
+        TomlEditor.WriteAtomic(_path, toml);
+        await release;
+        Assert.Equal(toml, Text());
+        Assert.Equal([_path], Directory.GetFiles(_dir));
+
+        using (new FileStream(_path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))  // held for good
+        {
+            var e = Record.Exception(() => TomlEditor.WriteAtomic(_path, "x", attempts: 2));
+            Assert.True(e is IOException or UnauthorizedAccessException, e?.ToString());
+        }
+        Assert.Equal([_path], Directory.GetFiles(_dir));  // the temp file is cleaned up
+        Assert.Contains("Pole", Text());                    // and the file is untouched
+    }
+
+    [Fact]
     public void Hash_inside_a_quoted_value_is_not_a_comment()
     {
         Assert.Equal("", TomlEditor.TrailingComment("\"C# room\""));

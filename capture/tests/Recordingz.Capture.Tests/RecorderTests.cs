@@ -1,5 +1,7 @@
 using System.Buffers.Binary;
+using System.Collections.Concurrent;
 using System.Text.Json;
+using NAudio.Wave;
 using Recordingz.Capture.Audio;
 using Recordingz.Capture.Contract;
 using Recordingz.Capture.Core;
@@ -72,6 +74,42 @@ public class RecorderTests
         Assert.Contains("\"devices\":[{\"device\":\"Reproduktory [Loopback]\",\"from_s\":0}", json);
         Assert.Contains("\"from_s\":312.5", json);
         Assert.DoesNotContain("devices", JsonSerializer.Serialize(one));
+    }
+
+    /// <summary>A disk that fills up: the header and the first bytes go through, then every write fails.</summary>
+    private sealed class FullDisk(int room) : MemoryStream
+    {
+        public override void Write(byte[] buffer, int offset, int count)
+        {
+            if (Position + count > room)
+                throw new IOException("There is not enough space on the disk.");
+            base.Write(buffer, offset, count);
+        }
+    }
+
+    [Fact]
+    public void A_failed_write_is_reported_and_the_queue_stops_taking_sound()
+    {
+        var queue = new BlockingCollection<Chunk>();
+        var wav = new WaveFileWriter(new FullDisk(1000), new WaveFormat(16000, 16, 1));
+        for (int i = 0; i < 5; i++)
+            queue.Add(new Chunk(new byte[640], 16000));
+        var error = Recorder.WriteChunks(queue, wav, 16000, 1, "mic", "x_mic.wav");
+        Assert.Contains("not enough space", error);
+        Assert.True(queue.IsAddingCompleted);  // the capture callback drops its buffers from now on
+        Assert.Empty(queue);                   // what was waiting is not kept in memory
+        Assert.Throws<InvalidOperationException>(() => queue.Add(new Chunk(new byte[640], 16000)));
+    }
+
+    [Fact]
+    public void A_writer_whose_queue_ends_reports_no_failure()
+    {
+        var queue = new BlockingCollection<Chunk>();
+        var file = new MemoryStream();
+        var wav = new WaveFileWriter(file, new WaveFormat(16000, 16, 1));
+        queue.Add(new Chunk(new byte[640], 16000));
+        queue.CompleteAdding();
+        Assert.Null(Recorder.WriteChunks(queue, wav, 16000, 1, "mic", "x_mic.wav"));
     }
 
     [Fact]

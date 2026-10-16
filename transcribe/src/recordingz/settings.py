@@ -20,6 +20,7 @@ from typing import Any
 
 from .config import (Config, RetentionSettings, SummarizeSettings, TranscribeSettings, VideoSettings,
                      VoiceprintSettings, default_config_path)
+from .fileio import atomic_write_text
 
 KEYRING_SERVICE = "recordingz"
 LEGACY_KEYRING_SERVICE = "teamsrec"  # the suite's name before 2.0: its stored keys still count
@@ -433,7 +434,16 @@ def write_changes(changes: dict[str, Any], path: Path | None = None) -> None:
     A key that is not in the file yet goes at the end of its section (or a new section at the end)."""
     path = path or default_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    lines = []
+    if path.exists():
+        old = path.read_text(encoding="utf-8")
+        try:  # an empty or half-written file (the capture app writing it right now) would lose every other key
+            if not old.strip():
+                raise ValueError("prázdný soubor")
+            tomllib.loads(old)
+        except ValueError as e:  # TOMLDecodeError too
+            raise SettingsError(f"{path.name} se nedá přečíst ({e}) – nastavení neuloženo, zkuste to znovu") from None
+        lines = old.splitlines()
     todo = {tuple(k.split(".", 1)): v for k, v in changes.items()}
     section, last_of = "", {}
     i = 0
@@ -486,9 +496,7 @@ def write_changes(changes: dict[str, Any], path: Path | None = None) -> None:
             last_of[sec] = len(lines) - 1
     text = "\n".join(lines) + "\n"
     tomllib.loads(text)  # never leave a broken file behind
-    tmp = path.with_suffix(".toml.tmp")
-    tmp.write_text(text, encoding="utf-8")
-    os.replace(tmp, path)
+    atomic_write_text(path, text)
 
 
 def save(values: dict[str, Any], path: Path | None = None) -> dict:

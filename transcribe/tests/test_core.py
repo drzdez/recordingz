@@ -3071,3 +3071,179 @@ def test_moving_replies_marks_the_groups_print_and_recalculating_it_uses_the_cur
     assert replies.recompute_prints(cfg, petr) == {"recomputed": 1, "skipped": 0}
     p = Voiceprints.load(tmp_path).people[petr][0]
     assert p["v"] == [1.0, 0.0] and "stale" not in p and p["recomputed"] == 1
+
+# ---------------------------------------------------------------- shared files, web safety (review 16. 10.)
+
+def test_atomic_write_keeps_the_old_file_when_the_replace_fails(tmp_path, monkeypatch):
+    import os
+    from recordingz import fileio
+    p = tmp_path / "people.json"
+    p.write_text("old", encoding="utf-8")
+    calls = []
+    real = os.replace
+
+    def busy(src, dst):  # Windows: the target is open in another process for a moment
+        calls.append(dst)
+        if len(calls) < 3:
+            raise PermissionError("in use")
+        return real(src, dst)
+    monkeypatch.setattr(fileio.os, "replace", busy)
+    fileio.atomic_write_text(p, "new", wait_s=0)
+    assert p.read_text(encoding="utf-8") == "new" and len(calls) == 3, "retried"
+
+    def broken(src, dst):
+        raise PermissionError("in use for good")
+    monkeypatch.setattr(fileio.os, "replace", broken)
+    with pytest.raises(PermissionError):
+        fileio.atomic_write_text(p, "newer", tries=3, wait_s=0)
+    assert p.read_text(encoding="utf-8") == "new", "the original is intact"
+    assert [f.name for f in tmp_path.iterdir()] == ["people.json"], "no temporary file left behind"
+
+
+def test_registry_lock_two_processes_lose_no_people(tmp_path):
+    """Review 16. 10., T3: a job (a child process) and the server's request threads load, change and save people.json
+    at the same time; without the lock one of them wrote over the other's new people."""
+    import subprocess
+    import sys
+    code = ("import sys\nfrom pathlib import Path\nfrom recordingz.fileio import registry_lock\n"
+            "from recordingz.people import People, Person\n"
+            "out, tag = Path(sys.argv[1]), sys.argv[2]\n"
+            "for i in range(25):\n"
+            "    with registry_lock(out):\n"
+            "        p = People.load(out)\n"
+            "        p.people.append(Person(id=f'{tag}-{i}', first=tag))\n"
+            "        p.save()\n")
+    procs = [subprocess.Popen([sys.executable, "-c", code, str(tmp_path), tag]) for tag in ("a", "b")]
+    assert [p.wait(timeout=120) for p in procs] == [0, 0]
+    from recordingz.people import People
+    ids = {p.id for p in People.load(tmp_path).people}
+    assert ids == {f"{t}-{i}" for t in ("a", "b") for i in range(25)}
+
+
+def test_registry_lock_is_reentrant_and_gives_up_after_its_timeout(tmp_path):
+    import threading
+    import time
+    from recordingz.fileio import registry_lock
+    with registry_lock(tmp_path):
+        with registry_lock(tmp_path):  # save_names -> enroll_names: the same thread again
+            pass
+    held, release = threading.Event(), threading.Event()
+
+    def holder():
+        with registry_lock(tmp_path):
+            held.set()
+            release.wait(10)
+    t = threading.Thread(target=holder, daemon=True)
+    t.start()
+    held.wait(5)
+    t0 = time.monotonic()
+    with registry_lock(tmp_path, timeout_s=0.3):  # a stuck holder: go on (with a warning) instead of hanging
+        assert time.monotonic() - t0 >= 0.25  # Windows timers are coarse
+    release.set()
+    t.join(5)
+    with registry_lock(tmp_path, timeout_s=1):  # free again
+        pass
+
+
+def test_web_stem_is_a_name_never_a_path(tmp_path):
+    """Review 16. 10., T4: %2F, %5C and %3A in {stem} decoded into a path, and DELETE removed that folder."""
+    from urllib.parse import quote
+    from recordingz import trash
+    out = tmp_path / "out"
+    out.mkdir()
+    victim = Recording.load(_make_recording(tmp_path / "elsewhere"))
+    srv, state, base = _serve(out)
+    try:
+        for stem in ("..%2F..%2Felsewhere%2F2026%2F09%2F2026-09-04_1400_tydenni-sync",
+                     quote(str(victim.dir), safe=""), quote(str(victim.sidecar_path), safe="")):
+            code, r = _call(base, "DELETE", f"/api/recordings/{stem}")
+            assert code == 400 and "error" in r, stem
+            assert _call(base, "POST", f"/api/recordings/{stem}/trash")[0] == 400
+            assert _call(base, "GET", f"/api/recordings/{stem}")[0] == 400
+        assert victim.dir.is_dir() and victim.sidecar_path.exists(), "the outside folder is still there"
+    finally:
+        srv.shutdown()
+    cfg = Config(out_dir=out)
+    (out / ".trash" / victim.dir.name).mkdir(parents=True)  # a same-named meeting in the trash
+    with pytest.raises(RecordingError):
+        trash.delete_now(cfg, victim)
+    with pytest.raises(RecordingError):
+        trash.move_to_trash(cfg, victim)
+    assert victim.dir.is_dir() and (out / ".trash" / victim.dir.name).is_dir(), "refused before anything was removed"
+
+
+def test_rename_is_refused_during_a_job_undone_on_failure_and_moves_exclusions(tmp_path, monkeypatch):
+    """Review 16. 10., T5."""
+    from recordingz.pipeline import rename_recording
+    from recordingz.voiceprints import Voiceprints
+    rec = _make_transcribed(tmp_path)
+    srv, state, base = _serve(tmp_path)
+    try:
+        state.jobs.append({"id": 99, "name": "process", "stem": rec.stem, "text": "", "fn": None, "done": ""})
+        code, r = _call(base, "PUT", f"/api/recordings/{rec.stem}/title", {"title": "Jiný název"})
+        assert code == 400 and "frontě" in r["error"] and rec.dir.exists(), "a meeting with a job keeps its name"
+        state.jobs.clear()
+        state.capture = {"running": True, "recording": True, "stem": rec.stem}
+        code, r = _call(base, "PUT", f"/api/recordings/{rec.stem}/title", {"title": "Jiný název"})
+        assert code == 400 and "nahrává" in r["error"]
+    finally:
+        srv.shutdown()
+
+    cfg = Config(out_dir=tmp_path)
+    before = sorted(p.name for p in rec.dir.iterdir())
+    sidecar = rec.sidecar_path.read_text(encoding="utf-8")
+    real, calls = Path.rename, []
+
+    def flaky(self, target):
+        calls.append(self)
+        if len(calls) == 3:
+            raise PermissionError("in use")
+        return real(self, target)
+    monkeypatch.setattr(Path, "rename", flaky)
+    with pytest.raises(PermissionError):
+        rename_recording(cfg, rec, "Jiný název")
+    monkeypatch.setattr(Path, "rename", real)
+    assert rec.dir.exists() and sorted(p.name for p in rec.dir.iterdir()) == before, "every rename undone"
+    assert rec.sidecar_path.read_text(encoding="utf-8") == sidecar and rec.title == "Týdenní sync"
+
+    vp = Voiceprints.load(tmp_path)
+    vp.enroll("petr", [1.0, 0.0], rec.stem, "SPEAKER_00", "m")
+    vp.exclude("jana", rec.stem, "Jana Nováková")
+    vp.save()
+    new = rename_recording(cfg, rec, "Jiný název")
+    assert new.stem == "2026-09-04_1400_jiny-nazev" and not rec.dir.exists()
+    vp = Voiceprints.load(tmp_path)
+    assert vp.people["petr"][0]["stem"] == new.stem
+    assert vp.is_excluded("jana", new.stem, "Jana Nováková"), "the exclusion follows the rename"
+
+
+def test_an_unexpected_error_still_answers_with_json(tmp_path, monkeypatch):
+    """Review 16. 10., T6: an OSError (or LLMError, MediaError ...) escaped _dispatch and the connection just dropped."""
+    from recordingz import trash
+    rec = _make_transcribed(tmp_path)
+
+    def locked(cfg, r):
+        raise PermissionError("the file is open in another program")
+    monkeypatch.setattr(trash, "delete_now", locked)
+    srv, state, base = _serve(tmp_path)
+    try:
+        code, r = _call(base, "DELETE", f"/api/recordings/{rec.stem}")
+        assert code == 500 and "open in another program" in r["error"]
+        code, rows = _call(base, "GET", "/api/recordings")
+        assert code == 200 and rows[0]["stem"] == rec.stem, "the server keeps serving"
+    finally:
+        srv.shutdown()
+
+
+def test_review_server_nobody_contacts_stops_by_itself(tmp_path, monkeypatch):
+    """Review 16. 10., T7: the idle clock started only with the first request, so a server no page ever reached ran
+    for ever."""
+    import threading
+    from recordingz.web import review as rv
+    monkeypatch.setattr(rv, "FIRST_CONTACT_S", 1.0)
+    lock = tmp_path / "lock.json"
+    t = threading.Thread(target=lambda: rv.serve(Config(out_dir=tmp_path), None, open_browser=False, lock=lock),
+                         daemon=True)
+    t.start()
+    t.join(timeout=15)
+    assert not t.is_alive() and not lock.exists()

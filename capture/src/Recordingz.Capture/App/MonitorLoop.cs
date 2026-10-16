@@ -24,28 +24,20 @@ internal static class AppLogic
     public const int OfferWindowS = 240;        // a calendar meeting is offered from its start until this long after it
     public const int OfferCheckS = 30;          // Outlook is asked at most this often (COM calls are slow)
 
-    // tray reason -> contract stop_reason (docs/recording-format.md); anything else counts as the user's stop
-    private static readonly Dictionary<string, string> StopReasons = new()
-    {
-        ["call ended"] = "call_ended", ["max duration"] = "max_duration", ["tray stop"] = "user_stop",
-        ["silence"] = "silence", ["quit"] = "app_quit", ["upgraded"] = "onsite_upgraded",
-    };
-
-    public static string StopReasonCode(string reason) =>
-        StopReasons.TryGetValue(reason, out var code) ? code : "user_stop";
-
     /// <summary>Contract `source` of a recording.</summary>
     public static string SourceOf(bool onsite, bool playback, bool manual) =>
         onsite ? "onsite" : playback ? "playback" : manual ? "manual" : "live";
 
     /// <summary>The tray tooltip and the menu's status line (App.status).</summary>
-    public static string StatusText(bool recording, double elapsedS, string title, string? audioWarned, bool prejoin)
+    public static string StatusText(bool recording, double elapsedS, string title, string? audioWarned, bool prejoin,
+                                    bool starting = false)
     {
         int m = (int)Math.Floor(Math.Max(0, elapsedS) / 60);
         if (recording && !string.IsNullOrEmpty(audioWarned))
             return $"⚠ {m} min — BEZ ZVUKU: {audioWarned}";
         if (!recording)
-            return prejoin ? "Teams join screen — recording starts when you join" : "Idle — waiting for a call";
+            return starting ? "● Starting the recording…"
+                : prejoin ? "Teams join screen — recording starts when you join" : "Idle — waiting for a call";
         return $"● REC {m} min — {title}";
     }
 
@@ -226,6 +218,8 @@ public sealed class MonitorLoop : IDisposable
     private string? _continues;           // stem of the on-site recording this live one took over from
     private CallApp? _callApp;            // null = Teams (or no call app: manual, on-site, playback)
     private double? _callMissingSince;
+    private bool _starting;               // a recording is being started outside the lock (devices, files, ffmpeg)
+    private string? _stopWhileStarting;   // a stop / quit came during that start: the new recording is not kept
 
     // -- state between recordings
     private volatile bool _declined;      // discarded on purpose / start failed: not again until the call is over
@@ -248,7 +242,12 @@ public sealed class MonitorLoop : IDisposable
         _finalizer = new Finalizer((at, title) => Outlook.Meeting(_cfg.UseOutlook, at, title), notifier, clock);
     }
 
-    public bool Recording { get { lock (_lock) return _rec is not null; } }
+    /// <summary>Test seams: opening the devices of a new recording, and where the capture status goes.</summary>
+    internal Func<Recorder, List<string>> OpenDevices = rec => rec.Start();
+    internal string StatusPath = AppLogic.CaptureStatusPath;
+
+    /// <summary>A recording runs or is being started (the tray offers Stop, an installer waits).</summary>
+    public bool Recording { get { lock (_lock) return _rec is not null || _starting; } }
 
     public string OutDir => _cfg.OutDir;
 
@@ -260,7 +259,7 @@ public sealed class MonitorLoop : IDisposable
         {
             double elapsed = _rec is null ? 0 : (_clock.Now - _rec.Started).TotalSeconds;
             return AppLogic.StatusText(_rec is not null, elapsed, _title, _rec is null ? null : _watchdog.Warned,
-                                       _prejoinSince is not null);
+                                       _prejoinSince is not null, _starting);
         }
     }
 
@@ -283,7 +282,7 @@ public sealed class MonitorLoop : IDisposable
                                                   rec is null ? null : AppLogic.SourceOf(_onsite, _playback, _manual),
                                                   rec?.Started, _clock.Now);
             }
-            var path = AppLogic.CaptureStatusPath;
+            var path = StatusPath;
             File.WriteAllText(path + ".tmp", json);
             File.Move(path + ".tmp", path, overwrite: true);
         }
@@ -327,6 +326,8 @@ public sealed class MonitorLoop : IDisposable
         Recorder? rec;
         lock (_lock)
         {
+            if (_starting)
+                return;  // a tray action is starting a recording: the next tick sees it
             rec = _rec;
             app = rec is not null ? _callApp : null;
         }
@@ -626,79 +627,67 @@ public sealed class MonitorLoop : IDisposable
     internal Recorder? StartRecording(string title, bool manual = false, bool playback = false, bool onsite = false,
                                       string? mic = null, CallApp? callApp = null)
     {
-        string stemPath;
-        Recorder? started;
         lock (_lock)
         {
-            if (_rec is not null) return null;
-            var now = _clock.Now;
-            var stem = Naming.Stem(now, title);
-            var dir = Naming.RecordingDir(_cfg.OutDir, now, stem);
-            stemPath = Path.Combine(dir, stem);
-            Directory.CreateDirectory(dir);
-            Recorder? rec = null;
-            List<string> files;
-            try
-            {
-                var micName = AppLogic.MicFor(onsite, playback, mic, _cfg.OnsiteMic, () =>
-                {
-                    var used = Devices.CallInputDevice();
-                    Log.Info("microphone: " + (!string.IsNullOrEmpty(used)
-                        ? $"the call uses '{used}'"
-                        : "no app records from a microphone, using the Windows default input"));
-                    return used;
-                });
-                rec = new Recorder(stemPath, !playback, onsite, micName, _clock);
-                files = rec.Start().ToList();
-            }
-            catch (Exception e)
-            {
-                FileLog.Exception("start failed", e);
-                try { rec?.Dispose(); } catch (Exception) { }
-                try { Directory.Delete(dir); }  // the folder we made a moment ago, still empty
-                catch (IOException) { }
-                catch (UnauthorizedAccessException) { }
-                _notifier.Notify($"Nahrávání se NESPUSTILO: {e.Message}");
-                _notifier.Beep(error: true);
+            if (_rec is not null || _starting) return null;
+            // the slow part (devices, files, ffmpeg) runs outside the lock: the tray reads the state meanwhile
+            _starting = true;
+            _stopWhileStarting = null;
+        }
+        Changed?.Invoke();  // "starting" in the tray
+        string stemPath;
+        Recorder? started = null;
+        Recorder rec;
+        List<string> files;
+        ScreenCaptureProcess? screen;
+        string? stopped;
+        try
+        {
+            if (OpenRecording(title, playback, onsite, mic, callApp) is not { } opened)
                 return null;
-            }
-            _rec = started = rec;
-            _stemPath = stemPath;
-            _files = files;
-            _manual = manual;
-            _playback = playback;
-            _onsite = onsite;
-            _titlesSeen = [];
-            _callMissingSince = null;
-            _noAudioWarned = false;
-            _prejoinSince = null;
-            _hiddenSince = null;
-            _hiddenWarned = false;
-            _continues = null;
-            _callApp = callApp;
-            _watchdog.Reset();
-            _calendar = null;  // looked up below, outside the lock (Outlook COM can take seconds)
-            (_title, _titleSource) = AppLogic.ResolveTitle(title, manual, null);
-            _screen = null;
-            // Teams window video (name tiles -> who speaks when); a played-back Teams recording shows them too
-            if (AppLogic.RecordsWindows(onsite, callApp))
+            (stemPath, rec, files, screen) = opened;
+            lock (_lock)
             {
-                var ff = Mixer.FindFfmpeg();
-                if (ff is not null)
+                _starting = false;
+                stopped = _stopWhileStarting;
+                if (stopped is null)
                 {
-                    try
-                    {
-                        _screen = new ScreenCaptureProcess(stemPath, rec.Started);
-                    }
-                    catch (Exception e)
-                    {
-                        FileLog.Exception("screen capture not started", e);
-                        _screen = null;
-                    }
+                    _rec = started = rec;
+                    _stemPath = stemPath;
+                    _files = files;
+                    _manual = manual;
+                    _playback = playback;
+                    _onsite = onsite;
+                    _titlesSeen = [];
+                    _callMissingSince = null;
+                    _noAudioWarned = false;
+                    _prejoinSince = null;
+                    _hiddenSince = null;
+                    _hiddenWarned = false;
+                    _continues = null;
+                    _callApp = callApp;
+                    _watchdog.Reset();
+                    _calendar = null;  // looked up below, outside the lock (Outlook COM can take seconds)
+                    (_title, _titleSource) = AppLogic.ResolveTitle(title, manual, null);
+                    _screen = screen;
                 }
-                else
-                    Log.Warn("screen capture needs ffmpeg (not found), recording audio only");
             }
+        }
+        finally
+        {
+            bool failed;
+            lock (_lock)
+            {
+                failed = _starting;  // still set: the start threw or the devices did not open
+                _starting = false;
+            }
+            if (failed)
+                Changed?.Invoke();
+        }
+        if (stopped is not null)
+        {
+            DropUnstarted(stemPath, rec, files, screen, title, stopped);
+            return null;
         }
         var calendarWarning = "";
         if (!playback)
@@ -722,6 +711,82 @@ public sealed class MonitorLoop : IDisposable
         return started;
     }
 
+    /// <summary>The slow part of a start, outside the lock: the folder, the devices and the window video. Null when
+    /// the devices did not open (the user is told loudly, the empty folder is removed).</summary>
+    private (string StemPath, Recorder Rec, List<string> Files, ScreenCaptureProcess? Screen)? OpenRecording(
+        string title, bool playback, bool onsite, string? mic, CallApp? callApp)
+    {
+        var now = _clock.Now;
+        var stem = Naming.Stem(now, title);
+        var dir = Naming.RecordingDir(_cfg.OutDir, now, stem);
+        var stemPath = Path.Combine(dir, stem);
+        Directory.CreateDirectory(dir);
+        Recorder? rec = null;
+        List<string> files;
+        try
+        {
+            var micName = AppLogic.MicFor(onsite, playback, mic, _cfg.OnsiteMic, () =>
+            {
+                var used = Devices.CallInputDevice();
+                Log.Info("microphone: " + (!string.IsNullOrEmpty(used)
+                    ? $"the call uses '{used}'"
+                    : "no app records from a microphone, using the Windows default input"));
+                return used;
+            });
+            rec = new Recorder(stemPath, !playback, onsite, micName, _clock);
+            files = OpenDevices(rec).ToList();
+        }
+        catch (Exception e)
+        {
+            FileLog.Exception("start failed", e);
+            try { rec?.Dispose(); } catch (Exception) { }
+            try { Directory.Delete(dir); }  // the folder we made a moment ago, still empty
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+            _notifier.Notify($"Nahrávání se NESPUSTILO: {e.Message}");
+            _notifier.Beep(error: true);
+            return null;
+        }
+        ScreenCaptureProcess? screen = null;
+        // Teams window video (name tiles -> who speaks when); a played-back Teams recording shows them too
+        if (AppLogic.RecordsWindows(onsite, callApp))
+        {
+            var ff = Mixer.FindFfmpeg();
+            if (ff is not null)
+            {
+                try
+                {
+                    screen = new ScreenCaptureProcess(stemPath, rec.Started);
+                }
+                catch (Exception e)
+                {
+                    FileLog.Exception("screen capture not started", e);
+                }
+            }
+            else
+                Log.Warn("screen capture needs ffmpeg (not found), recording audio only");
+        }
+        return (stemPath, rec, files, screen);
+    }
+
+    /// <summary>A stop, quit or session end came while the recording was starting: it is closed and deleted at once
+    /// (a few seconds at most, nothing worth keeping).</summary>
+    private void DropUnstarted(string stemPath, Recorder rec, List<string> files, ScreenCaptureProcess? screen,
+                               string title, string reason)
+    {
+        Log.Info($"'{title}' was stopped ({reason}) while starting, nothing kept");
+        DisposeQuietly(rec);
+        IReadOnlyList<ScreenInfo> screens = [];
+        if (screen is not null)
+        {
+            try { screens = screen.Stop(TimeSpan.FromSeconds(3)); }
+            catch (Exception e) { FileLog.Exception("screen capture stop", e); }
+        }
+        var dir = Path.GetDirectoryName(stemPath)!;
+        DeleteRecording(stemPath, files.Concat(screens.Select(s => Path.Combine(dir, s.File))));
+        Changed?.Invoke();
+    }
+
     /// <summary>Stop the running recording: delete it (aborted, too short, no audio file at all) or hand it to
     /// the finalizer on a background task with the metadata captured NOW - the next recording (on-site
     /// upgrade) may start before the sidecar is written.</summary>
@@ -732,7 +797,7 @@ public sealed class MonitorLoop : IDisposable
     public void EndSession()
     {
         bool recording;
-        lock (_lock) recording = _rec is not null;
+        lock (_lock) recording = _rec is not null || _starting;
         if (!recording)
             return;
         Log.Info("Windows is ending the session: closing the recording now");
@@ -750,12 +815,17 @@ public sealed class MonitorLoop : IDisposable
         RecordingInfo info;
         lock (_lock)
         {
-            if (_rec is null) return;
+            if (_rec is null && !_starting) return;
+            if (reason == "aborted")
+                _declined = true;  // discarded on purpose: do not start again until this call is over
+            if (_rec is null)
+            {
+                _stopWhileStarting ??= reason;  // StartRecording drops it as soon as the devices are open
+                return;
+            }
             rec = _rec;
             _rec = null;
             stemPath = _stemPath;
-            if (reason == "aborted")
-                _declined = true;  // discarded on purpose: do not start again until this call is over
             sc = _screen;
             _screen = null;
             recorded = _files.ToList();

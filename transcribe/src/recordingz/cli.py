@@ -284,10 +284,13 @@ def people_merge(ctx: typer.Context, keep: str = typer.Argument(..., help="perso
 @people_app.command("forget-voice")
 def people_forget_voice(ctx: typer.Context, person: str = typer.Argument(..., help="person id")):
     """Delete the stored voice prints of one person (the registry entry stays)."""
+    from .fileio import registry_lock
     from .voiceprints import Voiceprints
-    vp = Voiceprints.load(_cfg(ctx).out_dir)
-    vp.forget(person)
-    vp.save()
+    out_dir = _cfg(ctx).out_dir
+    with registry_lock(out_dir):
+        vp = Voiceprints.load(out_dir)
+        vp.forget(person)
+        vp.save()
     typer.echo(f"voice prints of {person} deleted")
 
 

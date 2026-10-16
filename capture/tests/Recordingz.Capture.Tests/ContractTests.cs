@@ -114,13 +114,6 @@ public sealed class ContractTests : IDisposable
         Assert.True(File.Exists(stemPath + "_sys.wav"));
     }
 
-    [Fact]
-    public void Restem_ReplacesPrefixOnly()
-    {
-        Assert.Equal("new_sys.wav", Naming.Restem("old_sys.wav", "old", "new"));
-        Assert.Equal("other.wav", Naming.Restem("other.wav", "old", "new"));
-    }
-
     // ------------------------------------------------------------------ stop reasons
 
     [Theory]

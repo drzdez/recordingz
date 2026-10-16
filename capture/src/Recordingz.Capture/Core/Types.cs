@@ -70,8 +70,6 @@ public sealed record RecordingInfo(string Title, CalendarItem? Calendar, string 
                                    IReadOnlySet<string> TitlesSeen, string? Continues, string Source,
                                    string? CallApp);
 
-public enum SourceKind { Live, Manual, Playback, Onsite }
-
 public static class Versions
 {
     public const string AppName = "recordingz";
@@ -100,6 +98,7 @@ public interface IAudioSource
     string MicName { get; set; }    // preferred input (name fragment); "" = Windows default input
     string OutputName { get; set; } // preferred output for the loopback (name fragment); "" = Windows default output
     bool SysPending { get; }        // the loopback track waits for an output device (none at the start)
+    string? WriteFailed { get; }    // why a WAV file is no longer written (disk full / gone); null = fine
     bool Reopen();                  // reopen the streams on the current devices, pad the gap with silence
     bool TryAddSys();               // the waiting loopback track: open it now if an output device exists
 }

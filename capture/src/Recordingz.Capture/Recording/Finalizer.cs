@@ -1,5 +1,6 @@
 using Recordingz.Capture.Contract;
 using Recordingz.Capture.Core;
+using Recordingz.Capture.Detection;
 
 namespace Recordingz.Capture.Recording;
 
@@ -37,9 +38,9 @@ public sealed class Finalizer(Func<DateTime, string?, CalendarItem?> outlookMeet
         var cal = info.Calendar;
         var titleSource = string.IsNullOrEmpty(info.TitleSource) ? "generic" : info.TitleSource;
         var titlesSeen = (info.TitlesSeen ?? new HashSet<string>()).Order(StringComparer.Ordinal).ToList();
-        if (IsGenericTitle(title))  // the window got its real subject only later in the call
+        if (CallDetector.IsGenericTitle(title))  // the window got its real subject only later in the call
         {
-            var better = GuessTitles(titlesSeen).FirstOrDefault();
+            var better = CallDetector.GuessTitles(titlesSeen).FirstOrDefault();
             if (better is not null)
             {
                 Log.Info($"title '{title}' replaced by '{better}' seen during the call");
@@ -135,7 +136,8 @@ public sealed class Finalizer(Func<DateTime, string?, CalendarItem?> outlookMeet
     internal (CalendarItem? Cal, string Title, string TitleSource, bool Changed) Rematch(
         DateTime started, CalendarItem? cal, string title, string titleSource, IEnumerable<string> titlesSeen)
     {
-        var seen = GuessTitles(titlesSeen.Order(StringComparer.Ordinal)).Where(t => !IsGenericTitle(t)).ToList();
+        var seen = CallDetector.GuessTitles(titlesSeen.Order(StringComparer.Ordinal))
+            .Where(t => !CallDetector.IsGenericTitle(t)).ToList();
         if (seen.Count == 0 || (cal is not null && cal.Match == "title"))
             return (cal, title, titleSource, false);
         foreach (var windowTitle in seen)
@@ -157,45 +159,4 @@ public sealed class Finalizer(Func<DateTime, string?, CalendarItem?> outlookMeet
 
     private static bool IsWav(string p) =>
         string.Equals(Path.GetExtension(p), ".wav", StringComparison.OrdinalIgnoreCase);
-
-    // Window-title helpers (Python: TEAMS_NAV, TEAMS_GENERIC, is_generic_title, guess_titles). Kept private
-    // here so this module compiles on its own; the integration step may point them to the Teams module.
-    private static readonly HashSet<string> TeamsNav = new(StringComparer.Ordinal)
-    {
-        "activity", "chat", "teams", "calendar", "calls", "files", "apps", "copilot",
-        "onedrive", "meet", "viva", "planner", "microsoft teams",
-        "aktivita", "týmy", "kalendář", "hovory", "soubory", "aplikace", "schůzka",
-    };
-
-    // Titles the meeting window carries before/without a subject (en + cs); a later window title is better.
-    private static readonly HashSet<string> TeamsGeneric = new(StringComparer.Ordinal)
-    {
-        "meeting", "join meeting", "meeting compact view", "compact view", "call", "teams-call",
-        "připojení ke schůzce", "kompaktní zobrazení schůzky", "kompaktní zobrazení", "hovor", "schůzka",
-        "ovládací panel sdílení", "sharing control bar", "screen sharing toolbar", "sdílení obsahu",
-    };
-
-    internal static bool IsGenericTitle(string? title)
-    {
-        var t = (title ?? "").Trim().ToLowerInvariant();
-        return t.Length == 0 || TeamsGeneric.Contains(t) || TeamsNav.Contains(t) || t.StartsWith("meeting compact");
-    }
-
-    /// <summary>Subjects of meeting windows ('&lt;subject&gt; | Microsoft Teams'), nav/generic titles skipped,
-    /// in order.</summary>
-    internal static List<string> GuessTitles(IEnumerable<string> titles)
-    {
-        var outList = new List<string>();
-        foreach (var t in titles)
-        {
-            var parts = t.Split('|').Select(p => p.Trim()).ToArray();
-            if (parts.Length < 2 || parts[^1].ToLowerInvariant() != "microsoft teams")
-                continue;
-            var head = parts[0];
-            if (IsGenericTitle(head) || TeamsNav.Contains(head.ToLowerInvariant()) || outList.Contains(head))
-                continue;
-            outList.Add(head);
-        }
-        return outList;
-    }
 }
