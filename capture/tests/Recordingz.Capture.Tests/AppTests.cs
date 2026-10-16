@@ -395,6 +395,17 @@ public class AppTests
     }
 
     [Fact]
+    public void Microphone_test_json_carries_the_verdict()
+    {
+        var j = SettingsServer.TestJson(new MicTest.Result("Pole", 1650, 60, 0));
+        Assert.Equal(false, j["speech"]);
+        Assert.Equal(60, j["rms"]);
+        Assert.StartsWith("Pole: jen šum", (string)j["message"]!);
+        Assert.Equal(true, SettingsServer.TestJson(new MicTest.Result("Pole", 9000, 900, 3))["speech"]);
+        Assert.Equal("x", SettingsServer.TestJson(new MicTest.Result("", 0, 0, 0, "x"))["error"]);
+    }
+
+    [Fact]
     public void Settings_json_shapes()
     {
         var devs = SettingsServer.DevicesJson([Bt]);

@@ -593,17 +593,10 @@ public sealed class MonitorLoop : IDisposable
 
     public void StopAsync(string reason) => Task.Run(() => Guard("stop", () => Stop(reason)));
 
-    /// <summary>Two seconds from the configured microphone, so a room can be checked before the meeting starts.</summary>
+    /// <summary>Three seconds from the configured microphone, so a room can be checked before the meeting starts.</summary>
     public void TestMicrophone() => Task.Run(() => Guard("microphone test", () =>
     {
-        var res = MicTest.Run(_cfg.OnsiteMic);
-        if (!string.IsNullOrEmpty(res.Error))
-        {
-            _notifier.Notify(res.Error!);
-            return;
-        }
-        bool loud = res.Peak >= Recorder.SilenceLevel;
-        _notifier.Notify($"{res.Device}: {(loud ? "slyší" : "TICHO")} (špička {res.Peak}, práh {Recorder.SilenceLevel})");
+        _notifier.Notify(MicTest.Run(_cfg.OnsiteMic).Message);
     }));
 
     private static void Guard(string what, Action action)

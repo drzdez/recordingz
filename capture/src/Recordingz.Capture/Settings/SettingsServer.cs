@@ -224,16 +224,17 @@ public sealed class SettingsServer : IDisposable
             ["name"] = u.Name, ["device"] = u.Device, ["reason"] = u.Reason,
         }).ToList();
 
-    /// <summary>POST /api/test: {device, peak, seconds, silence_level} or {error}.</summary>
-    private static Dictionary<string, object?> TestResult(string device)
+    /// <summary>POST /api/test: {device, peak, rms, speech, message, seconds} or {error}.</summary>
+    private static Dictionary<string, object?> TestResult(string device) => TestJson(MicTest.Run(device));
+
+    internal static Dictionary<string, object?> TestJson(MicTest.Result r)
     {
-        const double seconds = 2;
-        var r = MicTest.Run(device, seconds);
         if (!string.IsNullOrEmpty(r.Error))
             return new() { ["error"] = r.Error };
         return new()
         {
-            ["device"] = r.Device, ["peak"] = r.Peak, ["seconds"] = seconds, ["silence_level"] = Recorder.SilenceLevel,
+            ["device"] = r.Device, ["peak"] = r.Peak, ["rms"] = r.MaxRms, ["speech"] = r.Speech,
+            ["message"] = r.Message, ["seconds"] = MicTest.Seconds,
         };
     }
 

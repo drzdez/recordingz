@@ -187,9 +187,28 @@ def call_offer(cfg: Config, rec: Recording) -> dict:
     apart (a live call, [user] name set); the other side prefilled from the call window or the only participant."""
     mic = rec.track_path("mic")
     ok = bool(cfg.user_name) and rec.source != "onsite" and bool(mic and mic.exists())
-    names = sorted({p.full for p in People.load(cfg.out_dir, cfg.people_display).people if p.full}) if ok else []
+    people = People.load(cfg.out_dir, cfg.people_display).people if ok else []
+    names = sorted({p.full for p in people if p.full})
     return {"call_with": call_partner(cfg, rec) if ok else "", "call_offer": ok, "user_name": cfg.user_name,
-            "people_names": names}  # the other side: suggestions while typing
+            "people_names": names,  # the other side: suggestions while typing
+            "people_voiced": voiced_names(cfg, people)}
+
+
+def voiced_names(cfg: Config, people: list) -> list[str]:
+    """The names (normalised, every form a person matches by) of people who need no new voice print: they have one
+    already, or asked not to be recognised by voice. For a 1:1 call with a cloud transcript the page leaves the local
+    voices off for them (a minute of GPU saved, the minutes come sooner) and on for anybody else, so the other side
+    gets a print."""
+    if not people:
+        return []
+    from ..people import _norm
+    vp = Voiceprints.load(cfg.out_dir, cfg.voiceprints.max_prints)
+    out = set()
+    for p in people:
+        if vp.count(p.id) or not p.voiceprint:
+            forms = {p.id, p.full, p.nick, *p.aliases} | ({f"{p.last} {p.first}"} if p.first and p.last else set())
+            out |= {_norm(f) for f in forms if f}
+    return sorted(out)
 
 
 def build_review(cfg: Config, rec: Recording) -> dict:

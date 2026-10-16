@@ -864,7 +864,8 @@ function processPanel(/** @type {Review} */ r, /** @type {number} */ est, /** @t
     + `<div class="procCell col-cloud">${cell("procAsr", "cloud", c.transcribe.cloud, asr)}`
     + `<div class="procSub" data-for="cloud"><label title="Cloud mluvčí nepozná podle hlasu (nevrací hlasy). Po jeho přepisu se `
     + `lokálně (grafická karta, jen rozlišení hlasů, bez přepisu) poznají mluvčí podle hlasových otisků.">`
-    + `<input type="checkbox" class="cloudVoicesBox"> doplnit mluvčí lokálně podle hlasových otisků</label></div></div></div>`
+    + `<input type="checkbox" class="cloudVoicesBox"> doplnit mluvčí lokálně podle hlasových otisků</label>`
+    + `<span class="voicesWhy" hidden></span></div></div></div>`
     + `<div class="procRow">${step("Zápis", "shrnutí, závěry a úkoly z přepisu", 2)}`
     + `<div class="procCell col-local">${cell("procMin", "local", c.minutes.local, min)}</div>`
     + `<div class="procCell col-cloud">${cell("procMin", "cloud", c.minutes.cloud, min)}</div>`
@@ -902,6 +903,10 @@ function processPanel(/** @type {Review} */ r, /** @type {number} */ est, /** @t
     name.addEventListener("input", () => { tick.checked = !!name.value.trim(); });
     steps.appendChild(one);
   }
+  callVoiced = new Set(r.people_voiced || []);
+  const voices = /** @type {HTMLInputElement|null} */ (el.querySelector("input.cloudVoicesBox"));
+  // "input" comes before the panel's own "input" handler (syncProcess); setting .checked fires nothing
+  if (voices) voices.addEventListener("input", () => { voices.dataset.touched = "1"; });
   const what = document.createElement("p"); what.className = "procWhat minutesWhen";
   const go = document.createElement("div"); go.className = "procGo";
   go.appendChild(button);
@@ -919,6 +924,26 @@ function processPanel(/** @type {Review} */ r, /** @type {number} */ est, /** @t
   el.addEventListener("input", () => syncProcess());
   return el;
 }
+/** @type {Set<string>} */ let callVoiced = new Set();
+/** A name the way the server compares them (people._norm): no accents, single spaces, lower case. */
+function normName(/** @type {string} */ s) {
+  return s.normalize("NFKD").replace(/[^\x00-\x7f]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+/** Schůzka 1:1 with a cloud transcript: the local voices are what gives the other side a voice print, so they are
+ * ticked beforehand when that person has none yet and left off when they have (a minute of GPU, the minutes sooner);
+ * a box the user clicked stays as they set it. The reason is under the box. */
+function syncCallVoices() {
+  const box = /** @type {HTMLInputElement|null} */ (document.querySelector(".procPanel input.cloudVoicesBox"));
+  const why = /** @type {HTMLElement|null} */ (document.querySelector(".procPanel .voicesWhy"));
+  if (!box || !why) return;
+  const other = onlyWith();
+  why.hidden = !other || box.disabled;
+  if (!other) return;
+  const has = callVoiced.has(normName(other));
+  if (!box.dataset.touched) box.checked = !has;
+  why.textContent = has ? `${other} už hlasový otisk má – doplnění není potřeba, zápis přijde dřív`
+                        : `${other} zatím hlasový otisk nemá – doplnění mu ho při zpracování vytvoří`;
+}
 /** The chosen value of a step's radios, null when the page offers none. */
 function choice(/** @type {string} */ name) {
   const on = /** @type {HTMLInputElement|null} */ (document.querySelector(`input[name="${name}"]:checked`));
@@ -935,6 +960,7 @@ function syncProcess() {
     sub.classList.toggle("off", !on);
     sub.querySelectorAll("input").forEach(i => { /** @type {HTMLInputElement} */ (i).disabled = !on; });
   }
+  syncCallVoices();
   const what = /** @type {HTMLElement|null} */ (document.querySelector(".procWhat"));
   if (what) what.innerHTML = whatHappens();
 }

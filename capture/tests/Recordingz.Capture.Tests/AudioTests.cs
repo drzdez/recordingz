@@ -193,6 +193,45 @@ public class AudioTests
         Assert.Equal(clock.Seconds, rec.LastMicSpeech);
     }
 
+    [Fact]
+    public void Microphone_test_judges_speech_by_rms_not_peaks()
+    {
+        var rnd = new Random(7);
+        // the room of 2026-10-12: noise with a click a second; the old test said "slyší" by the peak
+        var room = Enumerable.Range(0, 300).Select(i => Buffer10ms(rnd, 58, click: i % 100 == 0 ? (short)1650 : (short)0));
+        var r = MicTest.Measure("Pole", room.ToList(), 48000 * 2);
+        Assert.True(r.Peak > Recorder.SilenceLevel);
+        Assert.False(r.Speech);
+        Assert.InRange(r.MaxRms, 50, 70);
+        Assert.StartsWith("Pole: jen šum, žádná řeč", r.Message);
+
+        var voice = Enumerable.Range(0, 300).Select(i => Buffer10ms(rnd, i < 100 ? 58 : 580)).ToList();
+        r = MicTest.Measure("Pole", voice, 48000 * 2);
+        Assert.True(r.Speech);
+        Assert.Equal(4, r.SpeechWindows);
+        Assert.StartsWith("Pole: slyší řeč", r.Message);
+
+        r = MicTest.Measure("Dongle", [new byte[48000 * 2 * 2 * 3]], 48000 * 2);
+        Assert.Equal(0, r.MaxRms);
+        Assert.StartsWith("Dongle: TICHO", r.Message);
+
+        Assert.Equal("test selhal: x", new MicTest.Result("", 0, 0, 0, "test selhal: x").Message);
+    }
+
+    [Fact]
+    public void Speech_meter_counts_whole_windows_only()
+    {
+        var m = new SpeechMeter();
+        var loud = new byte[4800 * 2];  // 0.1 s of mono 48 kHz
+        for (int i = 0; i < loud.Length; i += 2)
+            BinaryPrimitives.WriteInt16LittleEndian(loud.AsSpan(i), (short)(i % 4 == 0 ? 1000 : -1000));
+        for (int i = 0; i < 4; i++)
+            Assert.False(m.Add(loud, 48000));
+        Assert.Equal(0, m.Windows);
+        Assert.True(m.Add(loud, 48000));
+        Assert.Equal((1, 1, 1000), (m.Windows, m.SpeechWindows, m.MaxRms));
+    }
+
     private sealed class FakeClock(double seconds) : IClock
     {
         public DateTime Now { get; set; } = new(2026, 9, 29, 14, 0, 0);

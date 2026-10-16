@@ -3,6 +3,15 @@
 Notes for each release, newest first, written by hand for the people using it. The heading format is fixed
 (`## <version> – <date>`); a test keeps an entry for the current version.
 
+## 2.0.4 – 2026-10-16
+
+- **Test mikrofonu** (tray and Nastavení) judges speech the way the recording does, by the loudness of each half second
+  instead of the loudest click: it says "slyší řeč", "jen šum, žádná řeč" (room noise only – speak during the test)
+  or "TICHO" (the microphone delivers nothing). The test takes 3 s.
+- **Schůzka 1:1** with a cloud transcript: "doplnit mluvčí lokálně podle hlasových otisků" is ticked beforehand when
+  the other side has no voice print yet (the local voices give them one) and left off when they have one (a minute of
+  the graphics card saved, the minutes sooner). A line under it says which; a box you click stays as you set it.
+
 ## 2.0.3 – 2026-10-16
 
 - **What's new** after an update: the review window shows these notes once, and Nápověda → "O aplikaci a co je

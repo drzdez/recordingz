@@ -468,8 +468,11 @@ side is prefilled from the call window ("Marek Hudec | Microsoft Teams") or the 
 typed (the people already known are suggested; typing a name ticks it). Ticked, every longer voice the microphone did
 not take for you is that person after the transcript – also two groups the diarization split them into, also one the
 voice prints took for someone else – a confirmed name (a new person is created, the voice print stored when prints
-are on), so the minutes come right away. Not for calls where anyone else spoke. The Přepis tab of a recording without
-a transcript links to Mluvčí.
+are on), so the minutes come right away. Not for calls where anyone else spoke. With a cloud transcript the voice
+print needs the local voices (the cloud returns none), so **doplnit mluvčí lokálně podle hlasových otisků** is ticked
+beforehand when the other side has no print yet and left off when they have one (or do not want to be recognised by
+voice) – a minute of the graphics card saved and the minutes sooner; the line under it says which, and a box you click
+stays as you set it. The Přepis tab of a recording without a transcript links to Mluvčí.
 
 Processing from the page (local and the fast track alike) writes the minutes only when every speaker who said at least
 20 s has a name; otherwise it stops after the transcript (the Zápis tab says why), you name the speakers and **Uložit a

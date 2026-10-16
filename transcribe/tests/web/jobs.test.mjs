@@ -87,16 +87,21 @@ test("a job started elsewhere (or before a reload) shows as running, a second on
   const base = process.env.RECORDINGZ_REVIEW_URL;
   const post = (path, body) => fetch(new URL(path, base), { method: "POST", headers: { "Content-Type": "application/json" },
                                                          body: JSON.stringify(body) }).then(r => r.json());
-  const a = await post(`/api/recordings/${BOARD_NEW}/process`, {});
+  // from scratch: the fake takes 2 s, so the page (slow to open on a busy machine) still finds it running
+  const a = await post(`/api/recordings/${BOARD_NEW}/process`, { force: true });
   const b = await post(`/api/recordings/${WEEKLY}/summaries`, { provider: "anthropic", model: "claude-opus-5-5" });
   assert.equal(a.position, 1);
   assert.equal(b.position, 2, "queued, not refused");
   const p = await openPage(t, WEEKLY);  // like a reload while the jobs run
+  // the second job runs 0.3 s: every text the line shows is kept, polling could miss it
+  const seen = [];
+  new p.window.MutationObserver(() => seen.push(p.$("jobText").textContent))
+    .observe(p.$("jobText"), { childList: true, characterData: true, subtree: true });
   await waitFor(() => !p.$("jobBadge").hidden, "the running job on a page that did not start it");
-  assert.match(p.$("jobText").textContent, /běží: .*zpracování spuštěno · od \d\d:\d\d · ve frontě: 1/);
-  await waitFor(() => p.$("jobText").textContent.includes("zápis claude-opus-5-5 se generuje") &&
-                      !p.$("jobText").textContent.includes("ve frontě"), "the queued one running next", 6000);
-  await waitFor(() => p.$("jobBadge").hidden, "nothing left", 6000);
+  assert.match(p.$("jobText").textContent, /běží: .*nový přepis od nuly spuštěno · od \d\d:\d\d · ve frontě: 1/);
+  await waitFor(() => p.$("jobBadge").hidden, "nothing left", 10000);
+  assert.ok(seen.some(x => x.includes("zápis claude-opus-5-5 se generuje") && !x.includes("ve frontě")),
+            `the queued one running next, seen: ${JSON.stringify(seen)}`);
 });
 
 test("the history closes with a click anywhere outside it, or Esc", async t => {
@@ -124,7 +129,7 @@ test("an armed action goes back by itself or with Zrušit, and does nothing", as
   assert.equal(b.textContent, "Přepsat znovu od nuly");
   assert.equal(p.$("status").textContent, "", "the question leaves the status line");
   b.click();
-  await waitFor(() => b.textContent === "Přepsat znovu od nuly", "back after 6 s", 8000);
+  await waitFor(() => b.textContent === "Přepsat znovu od nuly", "back after 6 s", 12000);  // a 6 s timer: room for a busy machine
   assert.ok(!p.requests.some(r => r.startsWith("POST ") && r.endsWith("/process")), "nothing happened");
 
   p.$("saveSum").click();  // the minutes: a chooser, closed by Zrušit or Esc without doing anything

@@ -578,3 +578,25 @@ def test_review_server_nobody_contacts_stops_by_itself(tmp_path, monkeypatch):
     t.start()
     t.join(timeout=15)
     assert not t.is_alive() and not lock.exists()
+
+
+def test_voiced_names_every_form_of_people_with_a_print_or_opted_out(tmp_path):
+    """Schůzka 1:1 in the cloud: the page leaves the local voices off for these names."""
+    from recordingz.people import People
+    from recordingz.voiceprints import Voiceprints
+    from recordingz.web.views import voiced_names
+    people = People.load(tmp_path, "nick")
+    petr = people.ensure("Petr Svoboda")
+    petr.nick, petr.aliases = "Péťa", ["Svoboda, Petr (ATLAS)"]
+    people.ensure("Jana Nováková").voiceprint = False
+    people.ensure("Marek Hudec")
+    people.save()
+    vp = Voiceprints.load(tmp_path)
+    vp.enroll(petr.id, [1.0] + [0.0] * 255, "2026-09-02_0900_team-board", "SPEAKER_01")
+    vp.save()
+    cfg = Config(out_dir=tmp_path)
+    names = voiced_names(cfg, People.load(tmp_path).people)
+    assert {"petr svoboda", "svoboda petr", "peta", "petr-svoboda", "svoboda, petr (atlas)"} <= set(names)
+    assert "jana novakova" in names  # no print and none will be kept: nothing to gain
+    assert not any("marek" in n for n in names)
+    assert voiced_names(cfg, []) == []

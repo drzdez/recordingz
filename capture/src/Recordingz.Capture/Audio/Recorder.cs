@@ -41,8 +41,7 @@ public sealed class Recorder : IAudioSource, IDisposable
     private double _lastData, _lastLoud, _lastMicLoud, _lastMicAlive;
     private double _lastMicData = double.NaN;
     private double _lastMicSpeech = double.NaN;
-    private double _micSumSq;  // the mic's current speech window (capture callback only)
-    private long _micSamples;
+    private readonly SpeechMeter _micSpeech = new();  // capture callback only
     private long _bytesReceived;
     private volatile bool _heardSys, _heardMic;
     private int _reopens;
@@ -472,18 +471,8 @@ public sealed class Recorder : IAudioSource, IDisposable
     /// the mic's capture callback calls this, one at a time.</summary>
     internal void MeasureSpeech(byte[] pcm, int samplesPerS, double now)
     {
-        for (int i = 0; i + 1 < pcm.Length; i += 2)
-        {
-            double v = BinaryPrimitives.ReadInt16LittleEndian(pcm.AsSpan(i, 2));
-            _micSumSq += v * v;
-        }
-        _micSamples += pcm.Length / 2;
-        if (_micSamples < samplesPerS * SpeechWindowS)
-            return;
-        if (Math.Sqrt(_micSumSq / _micSamples) > SpeechRms)
+        if (_micSpeech.Add(pcm, samplesPerS))
             Volatile.Write(ref _lastMicSpeech, now);
-        _micSumSq = 0;
-        _micSamples = 0;
     }
 
     private static void PadSilence(Track t, double gapS)

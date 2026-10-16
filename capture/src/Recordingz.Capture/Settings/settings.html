@@ -55,7 +55,7 @@
       <div class="hint">Nahrává se z prvního zařízení, jehož název obsahuje tento text. V zasedačce
         použijte mikrofonní pole notebooku, ne sluchátka — ta slyší jen vás.</div>
       <div class="row" style="margin-top:10px">
-        <button id="test">Test mikrofonu (2 s)</button>
+        <button id="test">Test mikrofonu (3 s, mluvte)</button>
         <span class="msg" id="testmsg"></span>
       </div>
       <ul class="devices" id="unavailable"></ul>
@@ -249,7 +249,7 @@ async function testMic() {
   const btn = /** @type {HTMLButtonElement} */ (el("test"));
   const msg = el("testmsg");
   btn.disabled = true;
-  msg.textContent = "nahrávám 2 s…";
+  msg.textContent = "nahrávám 3 s, mluvte…";
   msg.className = "msg";
   try {
     const r = await fetch("/api/test", {
@@ -258,9 +258,8 @@ async function testMic() {
     });
     const res = await r.json();
     if (res.error) { msg.textContent = res.error; msg.className = "msg err"; return; }
-    const loud = res.peak >= res.silence_level;
-    msg.textContent = `${res.device}: ${loud ? "slyší" : "TICHO"} (špička ${res.peak}, práh ${res.silence_level})`;
-    msg.className = "msg " + (loud ? "ok" : "warn");
+    msg.textContent = res.message;
+    msg.className = "msg " + (res.speech ? "ok" : "warn");
   } finally {
     btn.disabled = false;
   }
