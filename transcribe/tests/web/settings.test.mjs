@@ -26,14 +26,14 @@ test("settings: sections, values from the file, only changes are saved, comments
   assert.ok(places.some(t => /Přepis řeči.*lokálně/.test(t)), "where the transcription runs");
   assert.ok(places.some(t => /Rychle přes cloud.*cloud/.test(t)), "the fast track is always listed, as cloud");
   assert.equal(field(p, "user.name").value, "Jan Novák");
-  assert.equal(field(p, "transcribe.glossary").value, "ORBIS\nSLA");
+  assert.equal(field(p, "transcribe.glossary").value, "ATLAS\nSLA");
   assert.equal(field(p, "transcribe.diarize").checked, true, "a default when the file does not say");
   assert.ok(field(p, "capture.onsite_mic").classList.contains("combo"), "the mic field is a dropdown of the inputs");
   assert.ok(p.$("settingsSave").disabled, "nothing to save yet");
 
   field(p, "transcribe.diarize").checked = false;
   field(p, "transcribe.diarize").dispatchEvent(new p.window.Event("change"));
-  p.input(field(p, "transcribe.glossary"), "ORBIS\nSLA\nBPMN");
+  p.input(field(p, "transcribe.glossary"), "ATLAS\nSLA\nBPMN");
   p.input(field(p, "voiceprints.threshold"), "0,6");
   assert.ok(!p.$("settingsSave").disabled);
   assert.equal(p.doc.querySelectorAll("#settingsMain .setRow.changed").length, 3);
@@ -44,7 +44,7 @@ test("settings: sections, values from the file, only changes are saved, comments
   await waitFor(() => /nastavení uloženo \(3\)/.test(p.$("status").textContent), "the save", 15000);
   assert.equal(p.doc.querySelectorAll("#settingsMain .setRow.changed").length, 0);
   const text = readFileSync(CONFIG, "utf8");
-  assert.match(text, /glossary = \["ORBIS", "SLA", "BPMN"\]/);
+  assert.match(text, /glossary = \["ATLAS", "SLA", "BPMN"\]/);
   assert.match(text, /diarize = false/);
   assert.match(text, /threshold = 0\.6/);
   assert.match(text, /name = "Jan Novák"  # your name/, "untouched lines keep their comments");

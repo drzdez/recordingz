@@ -5,7 +5,7 @@ Hardware: RTX 5090 Laptop (24 GB), torch 2.8.0+cu128, whisperx 3.8.6, ctranslate
 
 ## Transcription configurations
 
-| config | model | language | prompt | ASR s | total s | ORBIS ok / as "ORBYS" | notes |
+| config | model | language | prompt | ASR s | total s | ATLAS ok / as "ATLYS" | notes |
 |---|---|---|---|---|---|---|---|
 | base | large-v3 | cs (forced) | – | 62 | 177 | 19 / 30 | Slovak speech rendered as Czech–Slovak mix |
 | prompt-domain | large-v3 | cs (forced) | yes | 64 | 176 | 71 / 0 | prompt fixes domain terms completely |
@@ -20,7 +20,7 @@ Total = load + ASR + alignment (~40 s) + diarization (~62 s). Everything is 20�
 ## Conclusions
 
 1. **Domain prompt is mandatory.** `initial_prompt` with the meeting title + participant names + a user term list
-   turned "ORBYS" into "ORBIS" in 100 % of cases. Build it from the sidecar (`title`, `participants`) and a
+   turned "ATLYS" into "ATLAS" in 100 % of cases. Build it from the sidecar (`title`, `participants`) and a
    user-maintained glossary.
 2. **Detect language, don't force `cs`.** Forcing Czech on Slovak speech produces a hybrid. Auto-detect on the first
    30 s picked `sk` correctly. For mixed CS/SK meetings a later refinement is per-speaker language detection

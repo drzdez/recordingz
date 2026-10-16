@@ -1,56 +1,47 @@
 # recordingz – user guide
 
 The tool transcribes meeting recordings, works out who spoke when, and saves the transcript next to the recording.
-It works on one recordings folder (default `D:\meetings`), where both the live recordings of the capture app and
-imports of Teams recordings end up.
+It works on one recordings folder (default `%USERPROFILE%\meetings`; the examples here use `D:\meetings`), where
+both the live recordings of the capture app and imports of Teams recordings end up.
 
 The review page itself is in Czech; button labels and messages are quoted here as they appear on the page.
 
 ## 1. Installation (Windows, NVIDIA GPU)
 
-Once:
+Install the suite MSI from [the releases](https://github.com/drzdez/recordingz/releases/latest); details, and the
+manual setup from a source checkout, are in [Installation and configuration](install.md). The first start of the
+review window prepares the Python environment and runs the setup wizard: the recordings folder, your name, the
+languages, the transcription (on this PC or in the cloud; locally the Hugging Face token for the speaker models), the
+minutes, voice prints and the Outlook calendar. All of it can be changed later in **Nastavení**.
 
-1. **Tools:** `winget install astral-sh.uv Gyan.FFmpeg GitHub.cli` (gh only for development).
-2. **Sources and environment:**
-   ```
-   git clone https://github.com/drzdez/recordingz D:\projects\recordingz
-   cd D:\projects\recordingz\transcribe
-   uv sync --extra all
-   ```
-   This downloads Python 3.12, torch with CUDA 12.8 (~3 GB) and everything else. It needs NVIDIA driver 570 or newer.
-3. **Hugging Face** (the speaker models are behind a licence):
-   - sign up at huggingface.co, and on https://huggingface.co/pyannote/speaker-diarization-community-1 click
-     "Agree and access repository";
-   - log in: `.venv\Scripts\hf.exe auth login` (a code for the browser). The token is stored in your profile, nothing else.
-4. **Model for the minutes.** The default is a local model through Ollama, so the transcript never leaves the PC:
-   ```
-   winget install Ollama.Ollama
-   ollama pull gemma4:31b        # 20 GB, fits 24 GB VRAM
-   ```
-   The alternative is the Claude API (better minutes, the transcript goes to Anthropic's cloud): in the settings
-   choose Claude as the summary service and a model such as `claude-opus-5-5`, and enter the key from
-   https://console.anthropic.com/ under **Nastavení → Klíče API** (or set the environment variable
-   `RECORDINGZ_ANTHROPIC_API_KEY`; the tool's own name on purpose: a plain `ANTHROPIC_API_KEY` would be found by other
-   Anthropic tools such as Claude Code, which would offer to bill against it). A claude.ai Max subscription does not
-   cover the API; credit is prepaid in the Console. The minutes of a 70-minute meeting took 36k input and 7k output
-   tokens, about 0.35 USD.
-5. **Configuration:** `bin\recordingz.cmd config --init` creates `%APPDATA%\recordingz\recordingz.toml` and asks
-   for your name and whether it may read the calendar of classic Outlook on this PC (`[calendar] outlook`). With the
-   calendar each recording gets the right meeting title and the list of participants: capture when the call starts,
-   transcribe when it imports a recording (by its start time). It is read locally through COM; nothing leaves the PC.
-   The new Outlook (no COM) provides no calendar; then the title from the Teams window stays. Your name is stored as
-   `[user] name` and used for live recordings: the microphone track is only your voice, so your replies get your name
-   without guessing. An empty name turns this off. Then adjust `out_dir` and `glossary` (see chapter 5) – easiest on
-   the **Nastavení** page.
-6. **The command from anywhere:** add `D:\projects\recordingz\transcribe\bin` to PATH (Settings → environment variables),
-   or call `bin\recordingz.cmd` with its full path. The launcher finds the WinGet ffmpeg by itself.
+Worth knowing about these choices:
 
-Check: `recordingz config` must show `ffmpeg: ok` and the right `out_dir`.
+- **Your name** (`[user] name`) is used for live recordings: the microphone track is only your voice, so your replies
+  get your name without guessing. An empty name turns this off.
+- **The Outlook calendar** (`[calendar] outlook`): each recording gets the right meeting title and the list of
+  participants: capture when the call starts, transcribe when it imports a recording (by its start time). It is read
+  locally through COM; nothing leaves the PC. The new Outlook (no COM) provides no calendar; then the title from the
+  Teams window stays.
+- **The model for the minutes.** The default is a local model through Ollama, so the transcript never leaves the PC
+  (`winget install Ollama.Ollama`, then `ollama pull gemma4:31b`: 20 GB, fits 24 GB VRAM). The alternative is the
+  Claude API (better minutes, the transcript goes to Anthropic's cloud): in the settings choose Claude as the summary
+  service and a model such as `claude-opus-5-5`, and enter the key from https://console.anthropic.com/ under
+  **Nastavení → Klíče API** (or set the environment variable `RECORDINGZ_ANTHROPIC_API_KEY`; the tool's own name on
+  purpose: a plain `ANTHROPIC_API_KEY` would be found by other Anthropic tools such as Claude Code, which would offer
+  to bill against it). A claude.ai Max subscription does not cover the API; credit is prepaid in the Console. The
+  minutes of a 70-minute meeting took 36k input and 7k output tokens, about 0.35 USD.
+- **Then adjust `glossary`** (see chapter 5) – easiest on the **Nastavení** page.
+
+**The `recordingz` command** used in this guide: in the installed suite it is
+`%LOCALAPPDATA%\recordingz\env\Scripts\recordingz.exe` (add that folder to PATH, and point `RECORDINGZ_FFMPEG_DIR` at
+`%LOCALAPPDATA%\Programs\recordingz\ffmpeg` so it finds the bundled ffmpeg); in a source checkout it is the launcher
+`transcribe\bin\recordingz.cmd`. Check: `recordingz config` must show `ffmpeg: ok` and the right `out_dir`.
 
 The first transcription downloads the models (~5 GB: whisper large-v3, alignment for the language, pyannote, OCR),
 so the first run takes a few minutes longer.
 
-The review page can also run as a desktop window (`review/` in the repository, Tauri); see `review/README.md`.
+The review page runs in its own window (`recordingz-review.exe`: Start menu *recordingz - prepisy*, or a double click
+on the tray icon) or in a browser (`recordingz review`); see `review/README.md`.
 
 ## 2. Daily use
 
@@ -72,15 +63,14 @@ The review page can also run as a desktop window (`review/` in the repository, T
 A call is recorded from its first second, as soon as Teams takes the microphone, with no clicking: the tray only
 shows "Nahrávám: …". A recording can be discarded at any time from the tray icon's menu (Abort & delete). Who prefers
 to be asked sets "Na začátku hovoru v Teams" in the settings (`[capture] prompt_default = "ask"`: a "Zahodit?" box,
-kept without an answer within 45 s, or `"skip"`: discarded without an answer). The capture app is also watched every
-5 minutes by the Windows scheduled task `recordingz`: if it crashed, it starts again (a second instance quits
-by itself).
+kept without an answer within 45 s, or `"skip"`: discarded without an answer). An optional scheduled task starts the
+capture app again should it crash ([install.md](install.md#3-recording-the-capture-app)).
 
 A double click on the tray icon (or a click on its "Saved …" balloon) opens the review page, on that recording.
 
-The desktop shortcut **recordingz – zpracovat poslední** (or `bin\recordingz-process-latest.cmd`) imports what is in the
-`_inbox` and processes it, then the newest recording: transcript, export and minutes. The window stays open so the
-result can be read. The same from a terminal: `recordingz process --latest`.
+`recordingz process --latest` imports what is in the `_inbox` and processes it, then the newest recording:
+transcript, export and minutes. In a source checkout `transcribe\bin\recordingz-process-latest.cmd` does the same in a
+window that stays open so the result can be read (a desktop shortcut to it is handy).
 
 `latest` works in place of a stem in every command, e.g. `recordingz label-speakers latest`
 or `recordingz summarize latest --force`.
@@ -256,7 +246,7 @@ the page.
 
 ## 3. Output
 
-Every recording has its own folder `D:\meetings\YYYY\MM\<stem>\` (stem = `2026-09-03_1331_orbis-future-version`: date,
+Every recording has its own folder `D:\meetings\YYYY\MM\<stem>\` (stem = `2026-09-03_1331_project-kickoff`: date,
 time and meeting title). Every file in it carries the stem in its name, so it stays unambiguous when forwarded. The
 folder gets:
 
@@ -289,10 +279,10 @@ For each speaker it shows how long they spoke and a sample sentence; you type th
 
 ## 4a. Reviewing the speakers on the page (the recommended way)
 
-The desktop shortcut **recordingz – zkontrolovat mluvčí** (or `bin\recordingz-review-latest.cmd`, the command
-`recordingz review latest`, or a double click on the tray icon) opens a local page. It runs only on your PC
-(address 127.0.0.1) and sends nothing anywhere. The shortcut "zpracovat poslední" opens it by itself after processing
-when somebody in the recording is still unnamed.
+A double click on the tray icon (or `recordingz review latest`; in a source checkout
+`transcribe\bin\recordingz-review-latest.cmd`) opens a local page. It runs only on your PC (address 127.0.0.1) and
+sends nothing anywhere. `recordingz-process-latest.cmd` opens it by itself after processing when somebody in the
+recording is still unnamed.
 
 For each speaker the page shows: the label or name, how long they spoke, ▶ buttons with three voice samples, the two
 longest replies, the language they were transcribed in, and a hint from the minutes (role in the meeting, possibly a
@@ -599,14 +589,14 @@ compute_type = "float16" # 8 GB VRAM and more; 4–6 GB: "int8_float16"
 batch_size = 16          # 4–8 on cards with less memory
 align = true             # word times; turn off on weak hardware
 diarize = true           # telling the speakers apart; turn off when the video is enough, or on weak hardware
-glossary = ["ORBIS", "SLA", "Kubernetes", "BPMN", "Entra ID"]   # your terms, abbreviations, product names
+glossary = ["Atlas", "SLA", "Kubernetes", "BPMN", "Entra ID"]   # your terms, abbreviations, product names
 
 [video]
 enabled = true
 fps = 2
 ```
 
-**The glossary pays off.** Without it the model wrote the abbreviation ORBIS as "ORBYS" in 30 of 49 cases, with the
+**The glossary pays off.** Without it the model misspelled a product abbreviation in 30 of 49 cases, with the
 glossary 0 times. Add the names of systems, projects and abbreviations that keep coming up in meetings.
 
 Every setting can be overridden once on the command line, e.g.

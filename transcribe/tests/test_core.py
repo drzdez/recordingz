@@ -23,7 +23,7 @@ from recordingz.video_speakers import VideoTimeline
 # ---------------------------------------------------------------- naming
 
 def test_slugify_strips_diacritics_and_limits():
-    assert slugify("Týdenní sync: ORBIS / SLA") == "tydenni-sync-orbis-sla"
+    assert slugify("Týdenní sync: ATLAS / SLA") == "tydenni-sync-atlas-sla"
     assert slugify("!!!") == "recording"
     assert len(slugify("a" * 100)) == 60
 
@@ -35,10 +35,10 @@ def test_make_stem():
 # ---------------------------------------------------------------- import metadata
 
 def test_teams_name_pattern(tmp_path):
-    f = tmp_path / "ORBIS Future Version-20260903_133158-Meeting Recording.mp4"
+    f = tmp_path / "ATLAS Future Version-20260903_133158-Meeting Recording.mp4"
     f.write_bytes(b"x")
     m = derive_metadata(f, creation_time=datetime(2020, 1, 1))
-    assert m.title == "ORBIS Future Version"
+    assert m.title == "ATLAS Future Version"
     assert m.start == datetime(2026, 9, 3, 13, 31, 58)
     assert m.source == "teams-name"
 
@@ -103,8 +103,8 @@ def test_unsupported_format_rejected(tmp_path):
 
 def test_prompt_from_title_participants_glossary(tmp_path):
     rec = Recording.load(_make_recording(tmp_path))
-    p = build_prompt(rec, ("ORBIS", "SLA", "ORBIS"))
-    assert p == "Schůzka: Týdenní sync. Účastníci: Jana Nováková, Petr Svoboda. Pojmy: ORBIS, SLA."
+    p = build_prompt(rec, ("ATLAS", "SLA", "ATLAS"))
+    assert p == "Schůzka: Týdenní sync. Účastníci: Jana Nováková, Petr Svoboda. Pojmy: ATLAS, SLA."
 
 
 # ---------------------------------------------------------------- speakers
@@ -158,10 +158,10 @@ def test_txt_and_srt():
 
 def test_config_load_and_overrides(tmp_path):
     p = tmp_path / "recordingz.toml"
-    p.write_text('[recordings]\nout_dir = "D:/meetings"\n[transcribe]\nlanguage = "sk"\nglossary = ["ORBIS"]\nunknown = 1\n',
+    p.write_text('[recordings]\nout_dir = "D:/meetings"\n[transcribe]\nlanguage = "sk"\nglossary = ["ATLAS"]\nunknown = 1\n',
                  encoding="utf-8")
     cfg = load_config(p)
-    assert cfg.out_dir == Path("D:/meetings") and cfg.transcribe.language == "sk" and cfg.transcribe.glossary == ("ORBIS",)
+    assert cfg.out_dir == Path("D:/meetings") and cfg.transcribe.language == "sk" and cfg.transcribe.glossary == ("ATLAS",)
     assert cfg.transcribe.languages == ("cs", "sk", "en")
     p.write_text('[transcribe]\nlanguages = ["cs", "en"]\n', encoding="utf-8")
     assert load_config(p).transcribe.languages == ("cs", "en")
@@ -1153,7 +1153,7 @@ def test_screen_analysis_writes_merged_timeline(tmp_path, monkeypatch):
     # a main-window capture and OCR noise are ignored
     rec2 = Recording.load(_make_recording(tmp_path, stem="2026-09-04_1500_druha", screens=[
         {"file": "2026-09-04_1500_druha_screen1.mp4", "fps": 2, "start_offset_s": 0.0, "titles": ["Calendar | Microsoft Teams"]},
-        {"file": "2026-09-04_1500_druha_screen2.mp4", "fps": 2, "start_offset_s": 0.0, "titles": ["ORBIS | Microsoft Teams"]}]))
+        {"file": "2026-09-04_1500_druha_screen2.mp4", "fps": 2, "start_offset_s": 0.0, "titles": ["ATLAS | Microsoft Teams"]}]))
     rec2.file("_screen1.mp4").write_bytes(b"x"); rec2.file("_screen2.mp4").write_bytes(b"x")
     monkeypatch.setattr(pl, "analyze_screen", lambda path, **k: VideoTimeline(fps=2, speakers={"Develonment": [[0, 5]], "Petr Svoboda": [[5, 9]]}, clusters=[]))
     assert pl.do_video(cfg, rec2).speakers == {"Petr Svoboda": [[5, 9]]}
@@ -1471,7 +1471,7 @@ def test_review_stays_up_while_a_page_holds_its_event_stream(tmp_path, monkeypat
 def test_clean_headings_strips_copied_instructions():
     from recordingz.summarize import HEADINGS, clean_headings
     raw = ("## Shrnutí — 5 to 10 sentences: purpose of the meeting.\nText.\n"
-           "## Témata: one bullet per topic\n* a\n## Úkoly — a table\n| Kdo | Úkol |\n## Pojmy\n* ORBIS\n## Mluvčí\n| x |")
+           "## Témata: one bullet per topic\n* a\n## Úkoly — a table\n| Kdo | Úkol |\n## Pojmy\n* ATLAS\n## Mluvčí\n| x |")
     got = clean_headings(raw, HEADINGS["cs"])
     assert got.splitlines()[0] == "## Shrnutí"
     assert "## Témata\n" in got and "## Úkoly\n" in got and "## Pojmy\n" in got and "## Mluvčí\n" in got

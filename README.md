@@ -63,7 +63,7 @@ itself. A few keys:
 
 ```toml
 [recordings]
-out_dir = "D:/meetings"      # the recordings folder; _inbox lives inside it
+out_dir = "D:/meetings"      # the recordings folder (default ~/meetings); _inbox lives inside it
 
 [user]
 name = "Jan Novák"           # the microphone track of a live recording is this person
@@ -90,7 +90,7 @@ read from the environment or the Windows Credential Manager, where the settings 
 
 | path | what it is |
 |---|---|
-| [`capture/`](capture/README.md) | the capture app: .NET 10, WinForms tray, NAudio (WASAPI), xUnit tests; [PARITY.md](capture/PARITY.md) compares it with the earlier Python prototype |
+| [`capture/`](capture/README.md) | the capture app: .NET 10, WinForms tray, NAudio (WASAPI), xUnit tests; [PARITY.md](capture/PARITY.md) is the (historical) review of the port from the earlier Python prototype |
 | [`transcribe/`](transcribe/README.md) | the transcribe part: Python 3.12 package `recordingz` (uv), the review page (`src/recordingz/web/`), pytest + jsdom page tests, `lab/` experiments, launcher `bin\recordingz.cmd` |
 | [`review/`](review/README.md) | the review window: Tauri (Rust), a thin shell around the review page |
 | `installer/` | the WiX 6 per-user MSI: `build-msi.ps1`, `stage-suite.ps1` |
@@ -100,7 +100,7 @@ read from the environment or the Windows Credential Manager, where the settings 
 
 ## Build and test
 
-All parts share one version (`2.0.0`): `<Version>` in `capture/src/Recordingz.Capture/Recordingz.Capture.csproj`,
+All parts share one version: `<Version>` in `capture/src/Recordingz.Capture/Recordingz.Capture.csproj`,
 kept equal with the others by `transcribe/tests/test_version.py`.
 
 From the repository root:
@@ -126,7 +126,7 @@ cargo test --manifest-path src-tauri\Cargo.toml
 cd ..
 
 # the suite MSI
-powershell -File installer\stage-suite.ps1 -Version 2.0.0    # -> artifacts\suite
+powershell -File installer\stage-suite.ps1 -Version <version>    # -> artifacts\suite
 powershell -File installer\build-msi.ps1 -Suite artifacts\suite
 ```
 

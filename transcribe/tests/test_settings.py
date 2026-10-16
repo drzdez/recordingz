@@ -16,7 +16,7 @@ onsite_mic = "Pole mikrofonu (Intel® # 2)"  # a '#' inside the string is not a 
 [transcribe]
 provider = "whisperx"
 glossary = [
-    "ORBIS",   # multi-line array
+    "ATLAS",   # multi-line array
     "SLA",
 ]
 batch_size = 16
@@ -64,14 +64,14 @@ def test_values_come_from_the_file_or_the_defaults(cfg_file):
     v = settings.read_values(cfg_file)
     assert v["user.name"] == "Jan Novák"
     assert v["capture.onsite_mic"] == "Pole mikrofonu (Intel® # 2)"
-    assert v["transcribe.glossary"] == ["ORBIS", "SLA"]
+    assert v["transcribe.glossary"] == ["ATLAS", "SLA"]
     assert v["transcribe.diarize"] is True and v["voiceprints.enabled"] is False  # defaults
     assert v["capture.onsite_offer"] == "never"
 
 
 def test_saving_keeps_comments_order_and_other_keys(cfg_file):
     res = settings.save({"user.name": "Jana Nováková", "capture.onsite_mic": "Mikrofon (USB)",
-                         "transcribe.glossary": ["ORBIS", "SLA", "BPMN"], "transcribe.batch_size": "8",
+                         "transcribe.glossary": ["ATLAS", "SLA", "BPMN"], "transcribe.batch_size": "8",
                          "summarize.model": "gemma4:31b", "voiceprints.enabled": True,
                          "retention.audio_days": 30}, cfg_file)
     assert res == {"changed": ["capture.onsite_mic", "retention.audio_days", "transcribe.batch_size",
@@ -79,7 +79,7 @@ def test_saving_keeps_comments_order_and_other_keys(cfg_file):
     text = cfg_file.read_text(encoding="utf-8")
     assert 'name = "Jana Nováková"  # your name' in text
     assert "onsite_mic = \"Mikrofon (USB)\"  # a '#' inside the string is not a comment" in text
-    assert 'glossary = ["ORBIS", "SLA", "BPMN"]' in text and "multi-line array" not in text
+    assert 'glossary = ["ATLAS", "SLA", "BPMN"]' in text and "multi-line array" not in text
     assert "batch_size = 8" in text
     assert 'model = "gemma4:31b"         # ollama tag' in text, "an unchanged value is not rewritten"
     assert text.index("[voiceprints]") > text.index("[summarize]"), "a new section goes at the end"

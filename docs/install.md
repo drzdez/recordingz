@@ -80,9 +80,10 @@ uv run recordingz config --init
 The command from anywhere: add the `transcribe\bin` folder to PATH (the launcher `transcribe\bin\recordingz.cmd` uses the
 checkout's virtual environment and finds ffmpeg). Check: `recordingz config` prints what applies.
 
-**Desktop window (optional):** `cd review`, `npm install`, `npm run build`; copy
-`src-tauri\target\release\recordingz-review.exe` to `%LOCALAPPDATA%\Programs\recordingz-review\` (that is where the tray
-icon of the capture app looks for it) and make a Start menu shortcut to it. Details: `review/README.md`.
+**Desktop window (optional):** `cd review`, `npm install`, `npm run build`. The tray icon of the capture app looks for
+`recordingz-review.exe` in `[capture] review_app`, then next to its own exe (where the MSI puts it), then in
+`%LOCALAPPDATA%\Programs\recordingz-review\`: set `review_app` to `src-tauri\target\release\recordingz-review.exe` or
+copy it there. Details: `review/README.md`.
 
 ## 2. Minutes
 
@@ -101,8 +102,7 @@ icon of the capture app looks for it) and make a Start menu shortcut to it. Deta
 
 ## 3. Recording (the capture app)
 
-**From the MSI (recommended):** download `recordingz-<version>-x64.msi` from the
-[releases](https://github.com/drzdez/recordingz/releases) and run it. It needs no admin rights: it installs for
+**From the MSI (recommended):** the suite MSI above. It needs no admin rights: it installs the capture app for
 the current user into `%LOCALAPPDATA%\Programs\recordingz` (a single self-contained exe, no .NET runtime
 needed), adds a Start menu shortcut and a shortcut in the Startup folder (autostart at login), and starts the app.
 Its one question is the recordings folder, prefilled with `%USERPROFILE%\meetings` – click Next to keep it. The choice
@@ -165,7 +165,7 @@ One file for both apps: `%APPDATA%\recordingz\recordingz.toml`. Every setting ca
 | `[transcribe] when_recording` | processing while a recording starts: `ask` / `stop` / `continue` | `ask` |
 | `[transcribe] glossary` | terms for the transcription prompt (system names, abbreviations) | – |
 | `[voiceprints] enabled` | recognise people by voice (colleagues' biometrics, see Privacy) | `false` |
-| `[summarize] provider`, `model`, `compare` | minutes locally (Ollama) or through Claude; `compare` = extra minutes | `ollama`, `gemma4:31b` |
+| `[summarize] provider`, `model`, `compare` | minutes locally (Ollama) or through Claude or OpenAI; `compare` = extra minutes | `ollama`, `gemma4:31b` |
 | `[retention] audio_days` | after how many days the audio of finished meetings is deleted (texts stay); `0` = never | `0` |
 
 ## 5. Keys for the services

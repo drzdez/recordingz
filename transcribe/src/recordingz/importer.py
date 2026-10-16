@@ -17,7 +17,7 @@ from .recording import Recording, RecordingError, make_stem, recording_dir, slug
 
 log = logging.getLogger(__name__)
 
-# "ORBIS Future Version-20260903_133158-Meeting Recording.mp4"
+# "ATLAS Future Version-20260903_133158-Meeting Recording.mp4"
 TEAMS_NAME_RE = re.compile(r"^(?P<title>.+?)-(?P<date>\d{8})_(?P<time>\d{6})-Meeting Recording(?: ?\(\d+\))?$")
 
 

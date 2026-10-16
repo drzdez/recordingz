@@ -19,6 +19,10 @@ Notes for each release, newest first, written by hand for the people using it. T
   instead of dropping the connection. A review server nobody opens stops on its own.
 - Processing says the same on every tab (Mluvčí, Přepis, Zápis), in the words of the processing panel.
 - The capture log is rotated at 5 MB, and the bundled ffmpeg is preferred to one found on PATH.
+- The installer finds a running teamsrec 1.x capture app again and asks it to quit before the update (a typo in its
+  path made it miss it).
+- The documentation describes the installed suite (default folder `%USERPROFILE%\meetings`, the MSI, the wizard)
+  instead of the early development setup.
 
 ## 2.0.1 – 2026-10-15
 

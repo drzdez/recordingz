@@ -27,7 +27,7 @@ public static class Outlook
     private static readonly Regex NonAlnum = new("[^a-z0-9]+", RegexOptions.Compiled | RegexOptions.CultureInvariant);
 
     /// <summary>Title normalization for matching: diacritics dropped (NFKD, ASCII only), lower case, anything
-    /// but letters and digits collapsed to single spaces ("Porada  týmu – ORBIS" -> "porada tymu orbis").</summary>
+    /// but letters and digits collapsed to single spaces ("Porada  týmu – ATLAS" -> "porada tymu atlas").</summary>
     internal static string TitleNorm(string? s)
     {
         var decomposed = (s ?? "").Normalize(NormalizationForm.FormKD);
@@ -59,7 +59,7 @@ public static class Outlook
             var t = TitleNorm(title);
             var near = CandidatesAt(items, at, TitleWindowS);
             var subjects = near.Select(it => TitleNorm(it.Subject)).ToList();
-            // Exact, or one contains the other ("ORBIS sync" in "ORBIS sync | Microsoft Teams" after normalization).
+            // Exact, or one contains the other ("ATLAS sync" in "ATLAS sync | Microsoft Teams" after normalization).
             var hit = near.Where((it, i) => subjects[i].Length > 0 &&
                                             (subjects[i] == t || t.Contains(subjects[i], StringComparison.Ordinal) ||
                                              subjects[i].Contains(t, StringComparison.Ordinal)))

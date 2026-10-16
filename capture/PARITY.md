@@ -1,9 +1,13 @@
 # Parity: .NET port vs. the Python prototype
 
-Reference: the Python prototype (0.9.0). Port: `capture/src/Recordingz.Capture` (1.0.5).
-Review date: 2026-09-29. Checked by reading both code bases function by function. The build has
-0 errors and 0 warnings, and `dotnet test` passes 154 of 154 tests. Nothing has run on real hardware
-yet: the prototype holds the shared mutex, so a live run would record the same call twice.
+> **Historical.** The review that completed the port; the port is done and the prototype is no longer kept. Test
+> counts, versions and "untested" notes below are as of the review. Current behaviour: [README.md](README.md);
+> changes since: [CHANGELOG.md](../CHANGELOG.md).
+
+Reference: the Python prototype (0.9.0). Port: `capture/src/Recordingz.Capture` (then teamsrec-capture 1.0.5).
+Review date: 2026-09-29. Checked by reading both code bases function by function. The build had
+0 errors and 0 warnings, and `dotnet test` passed 154 of 154 tests. Nothing had run on real hardware
+yet: the prototype held the shared mutex, so a live run would have recorded the same call twice.
 
 Status legend: **done** = same behaviour as the prototype, **partial** = ported with a
 behavioural difference or an open risk, **missing** = not ported, **bug** = ported but does
@@ -48,8 +52,8 @@ the wrong thing on a real call.
 | Calendar re-match by window title | `_rematch` | `Finalizer.Rematch` | done | Tested. |
 | Rename folder + files | `_rename_files` | `Contract/Naming.cs` `RenameFiles`, `Finalizer` | done | The prototype's `stem.name[17:]` off-by-one is noted. The result is the same, because a same-name rename is a no-op. |
 | Mix (ffmpeg, mono 16 kHz, amix normalize=0) | `mix_audio`, `_ffmpeg` | `Recording/Mixer.cs` | done | Same ffmpeg lookup order (PATH, `RECORDINGZ_FFMPEG_DIR`, winget Gyan.FFmpeg). |
-| Sidecar fields | `_finalize` meta | `Contract/Sidecar.cs`, `Finalizer` | done | format, app, app_version, title, slug, source, start/end (ISO seconds), duration_s (banker's rounding like Python), stop_reason, title_source, audio_reopens, tracks (with `device`), teams_windows_seen, continues, call_app, mix, participants, calendar {source, subject, organizer, start/end to the minute, match, status, candidates ≤5}, audio_silent, screens. Differences: `app` = `recordingz` / `1.0.5` (matches the contract example), LF endings, written via `.json.tmp` + move. Unknown keys are kept on read. |
-| Stop reasons | `STOP_REASONS` | `StopReasons.ToContract`, `AppLogic.StopReasonCode` | done | `app_crash` (orphans) is not in the contract's `stop_reason` enum. The prototype writes it too, so this is contract drift, not a port gap. |
+| Sidecar fields | `_finalize` meta | `Contract/Sidecar.cs`, `Finalizer` | done | format, app, app_version, title, slug, source, start/end (ISO seconds), duration_s (banker's rounding like Python), stop_reason, title_source, audio_reopens, tracks (with `device`), teams_windows_seen, continues, call_app, mix, participants, calendar {source, subject, organizer, start/end to the minute, match, status, candidates ≤5}, audio_silent, screens. Differences: `app` / `app_version` = the app name and its assembly version, LF endings, written via `.json.tmp` + move. Unknown keys are kept on read. |
+| Stop reasons | `STOP_REASONS` | `StopReasons.ToContract`, `AppLogic.StopReasonCode` | done | `app_crash` (orphans) was not in the contract's `stop_reason` enum (the prototype wrote it too: contract drift, not a port gap); the contract lists it since. |
 | Post-recording hook | `POST_HOOK` | — | missing | It is `None` in the prototype, so no behaviour is lost. |
 | Orphan recovery | `recover_orphans`, `_repair_wav`, `screens_on_disk` | `Recording/Orphans.cs` | done | **Fixed 2026-09-29**: `RepairWav`/`ReadHeader` walk the RIFF chunks (any `fmt ` size, LIST chunks); test `A_crashed_NAudio_wav_is_repaired_and_read`. Was: the logic is ported (glob, < 5 s delete, stem parse, mix, `app_crash`, `recovered`, recovered screens). But `RepairWav`/`ReadHeader` accept only the canonical 44-byte header (`data` at offset 36). NAudio's `WaveFileWriter` writes an 18-byte `fmt ` chunk, so `data` is at offset 38 (header 46 bytes; verified with NAudio 2.2.1). As a result, **no WAV written by the .NET recorder is ever recovered**: after a crash, kill or shutdown it gets no sidecar, so transcribe never sees it. The prototype's own `_repair_wav` would reject these files too. See gap 2. |
 | Screen capture (per Teams window, 2 fps, 1600×900, x264 crf 26, fragmented mp4) | `ScreenCapture`, `grab_window`, `fit_canvas` | `Screen/ScreenCapture.cs`, `Screen/ScreenCaptureProcess.cs` | done | Same canvas, size filter (500×350), last-frame repeat, per-window files, titles, offsets. It pipes BGR24 instead of RGB24 (equivalent). **Fixed 2026-09-29**: runs in a child process like `ScreenCaptureProc` (`recordingz-capture.exe --screen-capture <stem> <started>`, stops when its stdin closes, reports in `<stem>_screens.json`); after 45 s the child is killed (its encoders still finish their files) and the videos on disk are kept as `recovered`. |
@@ -112,8 +116,8 @@ devices, Outlook, ffmpeg capture, the tray or the HTTP listener.
    - the sys track is the loopback of the *Windows default* output, so a Teams output set to another
      device records silence (the watchdog warns after 90 s);
    - a mic switch to a different format leaves the mic track silent for the rest of the call;
-   - no handling of session end;
-   - `app_crash` is not in the contract enum;
+   - ~~no handling of session end;~~ handled since 1.1.1 (see the session-end row);
+   - ~~`app_crash` is not in the contract enum;~~ added to the contract;
    - the Outlook Object Model Guard can prompt when reading recipients.
 10. **Untested live:** recording, reopen, screen capture (child process), Outlook, tray balloons, the
     settings page in a browser, and the input box. Do the first live run only after gaps 1 and 2 are

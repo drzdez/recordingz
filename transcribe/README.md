@@ -3,20 +3,11 @@
 The `recordingz` command: post-processing for meeting recordings made by the capture app
 ([`capture/`](../capture/README.md)) or imported from any audio/video file
 (typically a Teams meeting recording): transcription with speaker attribution, speaker naming,
-exports (txt/srt) and meeting summaries. Runs locally on an NVIDIA GPU (WhisperX); other backends later.
+exports (txt/srt) and meeting summaries. Runs locally (WhisperX on an NVIDIA GPU, or on the CPU) or with a cloud
+provider (OpenAI, ElevenLabs).
 
 Input/output contract: [recording-format.md](../docs/recording-format.md)
 (owned by the capture app; this part reads `format: 1`).
-
-## Status
-
-Working, early. Implemented and verified on a real 70-minute Teams recording:
-
-- `import` (any audio/video file, metadata from the Teams file name / container / file), Teams video analysis
-  for active speakers, `transcribe` (WhisperX on CUDA: ASR + alignment + diarization, speaker names from the video),
-  `export` (txt/srt), `label-speakers`, `review` (local page to name speakers by ear), `summarize` (minutes via
-  a local Ollama model or the Claude API), `process` (inbox + all pending), `list`, `config`.
-- Not yet: `purge-audio`, per-speaker language, the `me` track for live captures, CPU/cloud providers.
 
 User guide: [docs/user-guide.md](../docs/user-guide.md), installation: [docs/install.md](../docs/install.md), privacy: [docs/privacy.md](../docs/privacy.md) (the review page itself is in Czech). Background: [`lab/FINDINGS.md`](lab/FINDINGS.md) (measurements and decisions), [`docs/hardware-portability.md`](../docs/hardware-portability.md) (other GPUs, CPU, Mac, cloud).
 
@@ -33,15 +24,18 @@ recordingz process <stem|file>         # the same for one recording or one ad-ho
 recordingz process --latest            # import the inbox, then only the newest recording
                                                 # (`latest` also works as <stem> in every command)
 recordingz import <file> [--title ...] [--start ...] [--participants "A,B"] [--video]
-recordingz transcribe <stem|file> [--provider whisperx] [--language auto|cs|sk|en] [--no-diarize]
+recordingz transcribe <stem|file> [--provider whisperx|openai|elevenlabs] [--language auto|cs|sk|en] [--no-diarize]
+recordingz compare-transcribe <stem> --provider openai   # a second transcript next to the main one, to compare
+recordingz video <stem> [--participants "A,B"]           # (re)run the Teams video analysis
 recordingz label-speakers <stem>       # interactive: SPEAKER_00 -> "Jana Nováková"
 recordingz export <stem> [--txt] [--srt]
-recordingz summarize <stem> [--provider ollama|anthropic] [--model ...] [--language cs]
+recordingz summarize <stem> [--provider ollama|anthropic|openai] [--model ...] [--language cs] [--compare]
 recordingz review [latest|<stem>]              # local page: listen to each speaker, type names, save
 recordingz recognize [<stem>|latest] [--summary]      # match unknown speakers against voice prints collected since
 recordingz people list | merge KEEP DROP | forget-voice ID
 recordingz rename <stem> "New title"           # renames the folder + files to the new stem
-recordingz purge-audio [--older-than 30d]   # later: delete WAVs, keep transcripts
+recordingz purge-audio [--older-than 30] [--dry-run]   # delete audio + window videos of finished recordings, keep texts
+recordingz list                                # recordings and what each has (A audio, V video, T transcript, S summary)
 ```
 
 Typical day:
@@ -79,8 +73,8 @@ links out and closing work. Build: `cd review && npm install && npm run build`; 
 
 Voice prints are biometric data of colleagues: they are **off by default** (`config --init` asks), stored only
 after a person confirms a name, kept only on this machine, and anyone can opt out (the People tab deletes their
-prints at once and no new ones are made). What leaves the machine: nothing, except the transcript text when a
-summary is written through the Claude API. Details and a note to send to the team: [docs/privacy.md](../docs/privacy.md).
+prints at once and no new ones are made). What leaves the machine: nothing, except the audio with a cloud
+transcription provider and the transcript text when the minutes are written through Claude or OpenAI. Details and a note to send to the team: [docs/privacy.md](../docs/privacy.md).
 
 ## Configuration
 
@@ -99,18 +93,21 @@ display = "nick"                 # exports and minutes print: first | full | nic
 outlook = true                   # classic Outlook on this PC (COM): meeting title + participants (imports by start time)
 
 [recordings]
-out_dir = "D:/meetings"          # the recordings folder; _inbox lives inside it
+out_dir = "D:/meetings"          # the recordings folder (default ~/meetings); _inbox lives inside it
 
 [transcribe]
-provider = "whisperx"            # whisperx | (later) faster-whisper-cpu, cloud providers
-language = "auto"                # auto | cs | sk | en ; per-speaker detection planned (v2)
+provider = "whisperx"            # whisperx (local) | openai | elevenlabs (cloud: the audio goes to that service)
+language = "auto"                # auto | cs | sk | en
+languages = ["cs", "sk", "en"]   # auto detects only among these
+per_speaker_language = true      # auto: a speaker who talks another of `languages` is transcribed in it
+device = "cuda"                  # cuda | cpu
 model = "large-v3"
 compute_type = "float16"         # float16 | int8_float16 | int8  (pick by VRAM, see docs/hardware-portability.md)
 batch_size = 16
 align = true                     # word timestamps; needs an alignment model for the language
 diarize = true                   # pyannote; skipped automatically when the video timeline covers the recording
 diarize_model = "pyannote/speaker-diarization-community-1"
-glossary = ["ORBIS", "SLA", "Kubernetes", "BPMN", "Entra ID"]   # goes into the ASR prompt with title + participants
+glossary = ["Atlas", "SLA", "Kubernetes", "BPMN", "Entra ID"]   # goes into the ASR prompt with title + participants
 
 [video]
 enabled = true                   # analyse Teams video on import; ignored when the file has no video stream
@@ -118,7 +115,7 @@ fps = 2
 
 [summarize]
 enabled = true                   # run as part of `process`; a failure (no model, no key) is logged, not fatal
-provider = "ollama"              # ollama = local GPU, everything stays on the machine | anthropic = Claude API
+provider = "ollama"              # ollama = local GPU, everything stays on the machine | anthropic = Claude API | openai
 model = "gemma4:31b"             # ollama: `ollama pull gemma4:31b` (20 GB, fits 24 GB VRAM) | anthropic: claude-opus-5
 language = "cs"                  # language of the minutes, independent of the meeting language
 ollama_think = false             # thinking mode for local models: slower, sometimes better
@@ -174,7 +171,7 @@ ffmpeg -i "meeting.mp4" -vn -ac 1 -ar 16000 -c:a pcm_s16le samples/meeting_mix.w
 
 # 2. transcription + alignment + diarization; outputs in out/<name>/
 .venv/Scripts/python run_whisperx.py samples/meeting_mix.wav --name meeting --language auto ^
-    --initial-prompt "Schůzka o ORBIS. Témata: SLA, Kubernetes, BPMN."
+    --initial-prompt "Schůzka o Atlasu. Témata: SLA, Kubernetes, BPMN."
 
 # 3. speaker names from the Teams video, applied to the transcript -> out/video/transcript_named.txt
 .venv/Scripts/python video_speakers.py "meeting.mp4" --out out/video ^
@@ -187,8 +184,8 @@ WinGet ffmpeg is not on Git Bash's PATH; see `lab/README.md`.
 ## Stack
 
 - Python 3.12, `uv`, CLI via `typer`, config via TOML (`src/recordingz/`)
-- Providers behind one interface producing `<stem>.transcript.json`: `whisperx` (local); a CPU fallback and a
-  cloud provider (Azure AI Speech or ElevenLabs Scribe) are planned
+- Providers behind one interface producing `<stem>.transcript.json`: `whisperx` (local, CUDA or CPU),
+  `openai` and `elevenlabs` (cloud, `providers/`); `fasttrack.py` is the opt-in path through cloud services only
 - `video_speakers`: frame sampling + accent-colour label detection + easyocr
 - `mic_speakers`: the diarization label that coincides with microphone activity becomes the user (`[user] name`)
 - `people.py`: registry `<OUT_DIR>/_speakers/people.json` (first, last, nick, per-person display override);
@@ -202,5 +199,6 @@ WinGet ffmpeg is not on Git Bash's PATH; see `lab/README.md`.
   and ahead of the runner-up by `margin`; the match is written to `speakers.json` + `voice_matches` in the transcript
 - `summarize`: one prompt (summary / topics / decisions / action items / open questions / terms / speakers); transcripts
   that do not fit the local model's context (`ollama_max_ctx`, sized to stay on the GPU) are summarized in parts
-  and merged; two backends in
-  `llm.py`: Ollama REST (`/api/chat`, context sized to the transcript) and the Anthropic SDK (streaming, cached system prompt)
+  and merged; three backends in
+  `llm.py`: Ollama REST (`/api/chat`, context sized to the transcript), the Anthropic SDK (streaming, cached system
+  prompt) and the OpenAI Chat Completions API (`openai_url`)

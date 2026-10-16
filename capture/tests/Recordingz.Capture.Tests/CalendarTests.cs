@@ -18,26 +18,26 @@ public class CalendarTests
     public void Title_beats_time()
     {
         var standup = Item("Standup", "10:00", "10:15", teams: true);
-        var orbis = Item("ORBIS sync", "10:30", "11:00", teams: true);
-        var (it, match) = Outlook.Pick(new() { standup, orbis }, At("10:05"), "ORBIS sync");
-        Assert.Same(orbis, it);
+        var atlas = Item("ATLAS sync", "10:30", "11:00", teams: true);
+        var (it, match) = Outlook.Pick(new() { standup, atlas }, At("10:05"), "ATLAS sync");
+        Assert.Same(atlas, it);
         Assert.Equal("title", match);
     }
 
     [Fact]
     public void Title_with_window_suffix_matches_by_containment()
     {
-        var orbis = Item("ORBIS sync", "08:30", "09:15", teams: true);
-        var (it, match) = Outlook.Pick(new() { Item("Jiná", "08:30", "09:00"), orbis }, At("08:31"),
-                                       "ORBIS sync | Microsoft Teams");
-        Assert.Same(orbis, it);
+        var atlas = Item("ATLAS sync", "08:30", "09:15", teams: true);
+        var (it, match) = Outlook.Pick(new() { Item("Jiná", "08:30", "09:00"), atlas }, At("08:31"),
+                                       "ATLAS sync | Microsoft Teams");
+        Assert.Same(atlas, it);
         Assert.Equal("title", match);
     }
 
     [Fact]
     public void Title_normalization_ignores_diacritics_case_and_punctuation()
     {
-        Assert.Equal("porada tymu orbis", Outlook.TitleNorm("Porada  týmu – ORBIS!"));
+        Assert.Equal("porada tymu atlas", Outlook.TitleNorm("Porada  týmu – ATLAS!"));
         var porada = Item("Porada týmu", "13:00", "14:00");
         var (it, match) = Outlook.Pick(new() { Item("Oběd", "12:30", "13:30"), porada }, At("12:55"), "PORADA TYMU");
         Assert.Same(porada, it);
@@ -47,9 +47,9 @@ public class CalendarTests
     [Fact]
     public void Close_title_match_tolerates_a_typo()
     {
-        var weekly = Item("ORBIS sync weekly", "14:00", "15:00");
+        var weekly = Item("ATLAS sync weekly", "14:00", "15:00");
         var (it, match) = Outlook.Pick(new() { Item("Standup", "14:00", "14:15", teams: true), weekly }, At("14:01"),
-                                       "ORBIS synk weekly");
+                                       "ATLAS synk weekly");
         Assert.Same(weekly, it);
         Assert.Equal("title", match);
     }
@@ -58,9 +58,9 @@ public class CalendarTests
     public void Title_far_from_the_call_is_not_matched()
     {
         // the title window is 2 h: the same subject in the evening does not claim a morning call
-        var evening = Item("ORBIS sync", "18:00", "19:00");
+        var evening = Item("ATLAS sync", "18:00", "19:00");
         var now = Item("Standup", "09:00", "09:15");
-        var (it, match) = Outlook.Pick(new() { evening, now }, At("09:05"), "ORBIS sync");
+        var (it, match) = Outlook.Pick(new() { evening, now }, At("09:05"), "ATLAS sync");
         Assert.Same(now, it);
         Assert.Equal("time", match);
     }
@@ -123,7 +123,7 @@ public class CalendarTests
     [Fact]
     public void Empty_calendar_picks_nothing()
     {
-        var (it, match) = Outlook.Pick(new(), At("10:00"), "ORBIS sync");
+        var (it, match) = Outlook.Pick(new(), At("10:00"), "ATLAS sync");
         Assert.Null(it);
         Assert.Equal("", match);
     }
@@ -144,7 +144,7 @@ public class CalendarTests
 
     [Theory]
     [InlineData("abcd", "bcde", 0.75)]
-    [InlineData("orbis sync weekly", "orbis synk weekly", 0.9411764705882353)]
+    [InlineData("atlas sync weekly", "atlas synk weekly", 0.9411764705882353)]
     [InlineData("porada vyvoje", "planovani sprintu", 0.2)]
     [InlineData("", "", 1.0)]
     public void Ratio_matches_python_difflib(string a, string b, double expected)
@@ -155,18 +155,18 @@ public class CalendarTests
     [Fact]
     public void CloseMatch_respects_cutoff()
     {
-        Assert.Equal("orbis sync weekly", Outlook.CloseMatch("orbis synk weekly", new[] { "standup", "orbis sync weekly" }, 0.8));
+        Assert.Equal("atlas sync weekly", Outlook.CloseMatch("atlas synk weekly", new[] { "standup", "atlas sync weekly" }, 0.8));
         Assert.Null(Outlook.CloseMatch("porada vyvoje", new[] { "planovani sprintu" }, 0.8));
     }
 
     [Fact]
     public void Meeting_disabled_or_failing_returns_null_and_sets_match()
     {
-        var m = Item("ORBIS sync", "10:00", "11:00", teams: true);
+        var m = Item("ATLAS sync", "10:00", "11:00", teams: true);
         Assert.Null(Outlook.Meeting(false, At("10:00"), items: _ => throw new InvalidOperationException("no call expected")));
         Assert.Null(Outlook.Meeting(true, At("10:00"), items: _ => throw new InvalidOperationException("no Outlook")));
         Assert.Null(Outlook.Meeting(true, At("15:00"), items: _ => new() { m }));
-        var got = Outlook.Meeting(true, At("10:02"), "ORBIS sync", _ => new() { m });
+        var got = Outlook.Meeting(true, At("10:02"), "ATLAS sync", _ => new() { m });
         Assert.NotNull(got);
         Assert.Equal("title", got!.Match);
         Assert.Equal("time", Outlook.Meeting(true, At("10:02"), null, _ => new() { m })!.Match);

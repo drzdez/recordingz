@@ -21,7 +21,7 @@ public sealed class ContractTests : IDisposable
     [Theory]
     [InlineData("Týdenní sync", "tydenni-sync")]
     [InlineData("Příliš žluťoučký kůň úpěl ďábelské ódy", "prilis-zlutoucky-kun-upel-dabelske-ody")]
-    [InlineData("  ORBIS sync | Microsoft Teams  ", "orbis-sync-microsoft-teams")]
+    [InlineData("  ATLAS sync | Microsoft Teams  ", "atlas-sync-microsoft-teams")]
     [InlineData("Hello, World!", "hello-world")]
     [InlineData("", "teams-call")]
     [InlineData("!!! ???", "teams-call")]
@@ -82,10 +82,10 @@ public sealed class ContractTests : IDisposable
         var stemPath = MakeRecording("2026-09-29_0915_schuzka", "_sys.wav", "_mic.wav", "_mix.wav", "_screen1.mp4");
         File.WriteAllText(Path.Combine(Path.GetDirectoryName(stemPath)!, "notes.txt"), "keep");
 
-        var result = Naming.RenameFiles(stemPath, "ORBIS sync");
+        var result = Naming.RenameFiles(stemPath, "ATLAS sync");
 
-        var newDir = Path.Combine(_tmp, "2026", "09", "2026-09-29_0915_orbis-sync");
-        Assert.Equal(Path.Combine(newDir, "2026-09-29_0915_orbis-sync"), result);
+        var newDir = Path.Combine(_tmp, "2026", "09", "2026-09-29_0915_atlas-sync");
+        Assert.Equal(Path.Combine(newDir, "2026-09-29_0915_atlas-sync"), result);
         Assert.False(Directory.Exists(Path.GetDirectoryName(stemPath)));
         foreach (var s in new[] { "_sys.wav", "_mic.wav", "_mix.wav", "_screen1.mp4" })
         {
@@ -100,17 +100,17 @@ public sealed class ContractTests : IDisposable
     public void RenameFiles_TargetExists_KeepsOld()
     {
         var stemPath = MakeRecording("2026-09-29_0915_schuzka", "_sys.wav");
-        MakeRecording("2026-09-29_0915_orbis-sync", "_sys.wav");  // another recording in the same minute
+        MakeRecording("2026-09-29_0915_atlas-sync", "_sys.wav");  // another recording in the same minute
 
-        Assert.Equal(stemPath, Naming.RenameFiles(stemPath, "ORBIS sync"));
+        Assert.Equal(stemPath, Naming.RenameFiles(stemPath, "ATLAS sync"));
         Assert.True(File.Exists(stemPath + "_sys.wav"));
     }
 
     [Fact]
     public void RenameFiles_SameSlug_NoChange()
     {
-        var stemPath = MakeRecording("2026-09-29_0915_orbis-sync", "_sys.wav");
-        Assert.Equal(stemPath, Naming.RenameFiles(stemPath, "ORBIS  Sync!"));
+        var stemPath = MakeRecording("2026-09-29_0915_atlas-sync", "_sys.wav");
+        Assert.Equal(stemPath, Naming.RenameFiles(stemPath, "ATLAS  Sync!"));
         Assert.True(File.Exists(stemPath + "_sys.wav"));
     }
 

@@ -35,7 +35,7 @@ Machine-readable form of the sidecar: [`recording.schema.json`](recording.schema
   characters, fallback `teams-call`.
 - A recording is **complete** only once the sidecar `.json` exists. Until then nobody else touches the folder. Capture
   writes the sidecar as its last step.
-- Recordings shorter than the limit (default 120 s) and aborted recordings are deleted by capture without a sidecar.
+- Recordings shorter than 5 s and aborted recordings are deleted by capture without a sidecar.
 
 ### Renaming
 
@@ -58,7 +58,7 @@ files listed in `tracks` and `mix` may no longer exist; the sidecar remains the 
 {
   "format": 1,
   "app": "recordingz",
-  "app_version": "1.0.5",
+  "app_version": "2.0.2",
   "title": "Týdenní sync",
   "slug": "tydenni-sync",
   "source": "live",
@@ -179,7 +179,7 @@ end +5 min; the one that really contains the time wins, then Teams meetings). Th
 (participants' names) and
 
 ```json
-"calendar": {"source": "outlook", "subject": "ORBIS sync", "organizer": "Jana Nováková",
+"calendar": {"source": "outlook", "subject": "Atlas sync", "organizer": "Jana Nováková",
              "start": "2026-09-14T08:30", "end": "2026-09-14T09:15"}
 ```
 
@@ -202,7 +202,7 @@ the sidecar:
 ```json
 "screens": [
   {"file": "<stem>_screen1.mp4", "fps": 2, "width": 1600, "height": 900, "start_offset_s": 0.0,
-   "end_offset_s": 1748.0, "frames": 3496, "titles": ["Připojení ke schůzce | Microsoft Teams", "ORBIS sync | Microsoft Teams"]}
+   "end_offset_s": 1748.0, "frames": 3496, "titles": ["Připojení ke schůzce | Microsoft Teams", "Atlas sync | Microsoft Teams"]}
 ]
 ```
 
