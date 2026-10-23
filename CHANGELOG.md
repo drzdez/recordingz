@@ -3,6 +3,13 @@
 Notes for each release, newest first, written by hand for the people using it. The heading format is fixed
 (`## <version> – <date>`); a test keeps an entry for the current version.
 
+## 2.0.6 – 2026-10-23
+
+- **From one meeting straight to the next**: the recording of the first one now ends as soon as Teams opens the join
+  screen of the next (Teams keeps the microphone across, so the call never looked ended and the next meeting was
+  recorded into the first one). The next meeting gets its own recording, with its own title, once you join.
+- The log file no longer loses lines: the screen capture and the app wrote over each other's lines.
+
 ## 2.0.5 – 2026-10-16
 
 - **Test mikrofonu** (tray and Nastavení) judges speech the way the recording does, by the loudness of each half second

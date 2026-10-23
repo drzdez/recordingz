@@ -225,6 +225,7 @@ public sealed class MonitorLoop : IDisposable
     // -- state between recordings
     private volatile bool _declined;      // discarded on purpose / start failed: not again until the call is over
     private double? _prejoinSince;        // Teams sits on the join screen: the call has not started yet
+    private string? _nextMeeting;         // the meeting Teams joined straight from the recorded call
     private double? _hiddenSince;         // the Teams meeting window cannot be seen (minimized / only compact view)
     private bool _hiddenWarned;
     private readonly HashSet<string> _offered = [];  // calendar meetings already offered, so they are offered once
@@ -345,9 +346,11 @@ public sealed class MonitorLoop : IDisposable
     private void TickRecording(Recorder rec, bool inCall)
     {
         var teamsTitles = TeamsTitles();
+        List<string> seenBefore;
         lock (_lock)
         {
             if (!ReferenceEquals(rec, _rec)) return;
+            seenBefore = [.. _titlesSeen, _title];
             foreach (var t in teamsTitles) _titlesSeen.Add(t);
         }
         double elapsed = (_clock.Now - rec.Started).TotalSeconds;
@@ -382,7 +385,13 @@ public sealed class MonitorLoop : IDisposable
         }
         else if (!_manual)
         {
-            if (AppLogic.CallEnded(inCall, ref _callMissingSince, _clock.Seconds))
+            if (_callApp is null && seenBefore.Count > 1 && CallDetector.NextMeetingJoin(teamsTitles, seenBefore) is { } next)
+            {
+                Log.Info($"Teams joins the next meeting '{next}': the call before it is over");
+                _nextMeeting = next;
+                Stop("call ended");
+            }
+            else if (AppLogic.CallEnded(inCall, ref _callMissingSince, _clock.Seconds))
                 Stop("call ended");
         }
         Refresh();
@@ -426,7 +435,8 @@ public sealed class MonitorLoop : IDisposable
 
     private void TickIdle(bool inCall)
     {
-        if (inCall && !_declined && CallDetector.PrejoinOnly(TeamsTitles()))
+        var titles = inCall ? TeamsTitles() : new List<string>();  // the windows are listed only while Teams holds the microphone
+        if (inCall && !_declined && (CallDetector.PrejoinOnly(titles) || CallDetector.StillJoining(titles, _nextMeeting)))
         {
             if (_prejoinSince is null)  // the mic is held by the join dialog's device preview
             {
@@ -438,7 +448,10 @@ public sealed class MonitorLoop : IDisposable
         else if (inCall && !_declined)
         {
             _prejoinSince = null;
-            var title = CallDetector.GuessMeetingTitle(TeamsTitles()) ?? "teams-call";
+            var guessed = CallDetector.GuessTitles(titles);
+            // straight from another call: its window may still be open, the meeting being joined names this one
+            var title = guessed.Contains(_nextMeeting ?? "") ? _nextMeeting! : guessed.FirstOrDefault() ?? "teams-call";
+            _nextMeeting = null;
             var cal = Outlook.Meeting(_cfg.UseOutlook, null, title);
             if (!string.IsNullOrEmpty(cal?.Subject)) title = cal!.Subject;
             var rec = StartRecording(title);  // record first; nothing to click, the tray menu can still discard it
@@ -468,6 +481,7 @@ public sealed class MonitorLoop : IDisposable
                 CalendarOffer();
             if (!(_cfg.OtherApps == "record" && OtherCall() is not null))
                 _declined = false;  // the declined call is over
+            _nextMeeting = null;  // joining it was given up
             if (_prejoinSince is not null)  // the join dialog was closed without joining
             {
                 Log.Info($"Teams left the join screen without a call after {_clock.Seconds - _prejoinSince.Value:F0} s");

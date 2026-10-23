@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Security.AccessControl;
 using System.Text;
 using Recordingz.Capture.Core;
 
@@ -41,9 +42,11 @@ public sealed class FileLog : IDisposable
 
     private void Open()
     {
-        // FileShare.ReadWrite | Delete: the Python prototype (or an editor) may have the same file open;
-        // a log must never be the reason the recorder does not start.
-        var fs = new FileStream(_path, FileMode.Append, FileAccess.Write, FileShare.ReadWrite | FileShare.Delete);
+        // FileShare.ReadWrite | Delete: the screen capture process, the transcribe part (or an editor) may have the
+        // same file open; a log must never be the reason the recorder does not start. Append-only access makes
+        // Windows put every write at the current end, so writers in other processes do not overwrite each other.
+        var fs = new FileInfo(_path).Create(FileMode.Append, FileSystemRights.AppendData,
+                                            FileShare.ReadWrite | FileShare.Delete, 4096, FileOptions.None, null);
         _writer = new StreamWriter(fs, new UTF8Encoding(false)) { AutoFlush = true };
     }
 

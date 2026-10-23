@@ -386,6 +386,37 @@ public class AppTests
     }
 
     [Fact]
+    public void FileLog_shared_by_two_writers_keeps_every_line()
+    {
+        // the screen capture process logs into the same file: with its own position each overwrote the other's
+        // lines (2026-10-23)
+        var path = Path.Combine(Path.GetTempPath(), $"recordingz-test-{Guid.NewGuid():N}", "recordingz.log");
+        try
+        {
+            using (var app = new FileLog(path))
+            using (var screen = new FileLog(path))
+            {
+                for (int i = 0; i < 20; i++)
+                {
+                    app.Write("INFO", $"app {i}");
+                    screen.Write("INFO", $"screen {i}");
+                }
+            }
+            var lines = File.ReadAllLines(path);
+            Assert.Equal(40, lines.Length);
+            for (int i = 0; i < 20; i++)
+            {
+                Assert.EndsWith($" INFO app {i}", lines[2 * i]);
+                Assert.EndsWith($" INFO screen {i}", lines[2 * i + 1]);
+            }
+        }
+        finally
+        {
+            Directory.Delete(Path.GetDirectoryName(path)!, true);
+        }
+    }
+
+    [Fact]
     public void Settings_page_is_embedded()
     {
         using var s = typeof(SettingsServer).Assembly.GetManifestResourceStream("settings.html");

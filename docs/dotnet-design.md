@@ -52,7 +52,7 @@ The modules match parts of the prototype one to one, so it is easy to trace wher
    ▼
  running ─ Watchdog.Tick()        ← no data → reopen with a growing pause; dead microphone → yellow icon
    │       Watchdog.FollowCallMic()← the call app switched headsets → switch the microphone track
-   │       end: the app releases the microphone (10 s), Stop & keep, 4 h safety stop, silence in playback
+   │       end: the app releases the microphone (10 s), the join screen of another meeting, Stop & keep, 4 h safety stop, silence in playback
    ▼
  stop ─── RecordingInfo taken at the moment of the stop (title, calendar, windows seen, continues, call_app)
    │      not a single WAV → the folder goes, "nevznikla" (not made) message

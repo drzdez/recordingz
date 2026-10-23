@@ -135,6 +135,37 @@ public static class CallDetector
         return list.Any(IsPrejoinTitle) && !list.Any(IsMeetingWindow);
     }
 
+    /// <summary>
+    /// The subject of a join dialog ("Připojení ke schůzce | &lt;subject&gt; | Microsoft Teams") that none of the
+    /// earlier titles of a recording names: the user went from that call straight to the next meeting, and Teams
+    /// keeps the microphone across, so the call never looks ended (2026-10-23: a stand-up recorded on into the next
+    /// meeting). A join dialog without a subject, or of the recorded meeting itself, is not one.
+    /// </summary>
+    public static string? NextMeetingJoin(IEnumerable<string> titles, IReadOnlyCollection<string> seenBefore)
+    {
+        var known = seenBefore.SelectMany(TitleParts).Select(Lower).ToHashSet();
+        foreach (var t in titles)
+        {
+            if (!IsPrejoinTitle(t))
+                continue;
+            var parts = TitleParts(t);
+            if (parts.Length >= 3 && !IsGenericTitle(parts[1]) && !known.Contains(Lower(parts[1])))
+                return parts[1];
+        }
+        return null;
+    }
+
+    /// <summary>Teams shows the join dialog of that next meeting and no window of it yet: the window of the call
+    /// before may still be open, which <see cref="PrejoinOnly"/> takes for a joined call.</summary>
+    public static bool StillJoining(IEnumerable<string> titles, string? next)
+    {
+        if (string.IsNullOrEmpty(next))
+            return false;
+        var list = titles as IReadOnlyCollection<string> ?? titles.ToList();
+        return list.Any(t => IsPrejoinTitle(t) && TitleParts(t) is { Length: >= 3 } p && Lower(p[1]) == Lower(next))
+               && !GuessTitles(list).Any(s => Lower(s) == Lower(next));
+    }
+
     /// <summary>Subjects of meeting windows ('&lt;subject&gt; | Microsoft Teams'), nav/generic titles skipped, in order.</summary>
     public static List<string> GuessTitles(IEnumerable<string> titles)
     {

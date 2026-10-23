@@ -17,6 +17,35 @@ public class DetectionTests
         Assert.False(CallDetector.PrejoinOnly([]));
     }
 
+    [Fact]
+    public void The_join_dialog_of_another_meeting_ends_the_recorded_call()
+    {
+        // 2026-10-23: from a stand-up straight to the next meeting, Teams kept the microphone and the stand-up
+        // recorded on
+        string[] seen = ["Archi standup | Microsoft Teams", "Calendar | Microsoft Teams", "Archi standup"];
+        const string next = "Připojení ke schůzce | Software type / Licensing | Microsoft Teams";
+        Assert.Equal("Software type / Licensing", CallDetector.NextMeetingJoin([next, "Calendar | Microsoft Teams"], seen));
+        Assert.Equal("Software type / Licensing",
+                     CallDetector.NextMeetingJoin(["Archi standup | Microsoft Teams", next], seen), ignoreCase: true);
+        // the recorded meeting's own join dialog, still listed when the recording starts, is not another meeting
+        Assert.Null(CallDetector.NextMeetingJoin(["Připojení ke schůzce | ARCHI STANDUP | Microsoft Teams"], seen));
+        Assert.Null(CallDetector.NextMeetingJoin(["Připojení ke schůzce | Microsoft Teams"], seen));  // no subject
+        Assert.Null(CallDetector.NextMeetingJoin(["Software type / Licensing | Microsoft Teams"], seen));
+        Assert.Null(CallDetector.NextMeetingJoin([next], [.. seen, next]));  // seen before: it was there all along
+    }
+
+    [Fact]
+    public void After_a_call_the_next_meeting_starts_once_joined_even_with_the_old_window_open()
+    {
+        const string join = "Připojení ke schůzce | Software type | Microsoft Teams";
+        string[] joining = [join, "Archi standup | Microsoft Teams"];
+        Assert.False(CallDetector.PrejoinOnly(joining), "the old meeting window looks like a joined call");
+        Assert.True(CallDetector.StillJoining(joining, "Software type"));
+        Assert.False(CallDetector.StillJoining(joining, null));
+        Assert.False(CallDetector.StillJoining([join, "Software type | Microsoft Teams"], "Software type"));
+        Assert.False(CallDetector.StillJoining(["Archi standup | Microsoft Teams"], "Software type"), "join dialog closed");
+    }
+
     private static readonly Dictionary<string, string[]> BrowserTitles = new()
     {
         ["chrome.exe"] = ["Meet – abc-defg-hij - Google Chrome", "Inbox - Gmail - Google Chrome"],

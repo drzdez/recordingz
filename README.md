@@ -34,7 +34,9 @@ Start it once (the MSI puts it into autostart) and forget about it. It sits in t
    (`prompt_default = "ask"` shows a *discard?* box instead). The join screen does not count as a call: Teams holds
    the microphone there only for the device preview.
 2. While recording, the tray icon is red and shows the elapsed time. Tray menu: **Stop & keep**, **Abort & delete**.
-3. Recording stops by itself ~10 s after the call ends (hard cap 4 h). Too short recordings are discarded.
+3. Recording stops by itself ~10 s after the call ends, or as soon as Teams opens the join screen of another meeting
+   (straight from one meeting to the next, Teams keeps the microphone); the next meeting gets its own recording once
+   joined. Hard cap 4 h. Too short recordings are discarded.
 4. Files land in one folder per recording, `<out_dir>/YYYY/MM/<stem>/`: `<stem>_sys.wav`, `_mic.wav`, `_mix.wav`,
    `_screen<N>.mp4` and the `<stem>.json` sidecar (stem = `<date>_<time>_<title-slug>`).
 5. A double click on the tray icon opens the review page; there (or with `recordingz process`) the recording is
