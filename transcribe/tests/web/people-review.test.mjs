@@ -34,7 +34,8 @@ test("person page: to the meeting at the speaker's card and back; a confirmation
   row.querySelector("a.openRec").click();
   await waitFor(() => !p.$("pick").hidden && p.$("tabSpeakers").classList.contains("active"), "the Schůzka tab");
   assert.ok(p.$("peopleMain").hidden && !p.$("main").hidden, "the meeting, not the people");
-  assert.ok(p.doc.querySelector('.card.flash .side[data-label="Jana Nováková"]'), "Jana's card is pointed at");
+  // the tab switches before the recording has loaded; the card is pointed at after that
+  await waitFor(() => p.doc.querySelector('.card.flash .side[data-label="Jana Nováková"]'), "Jana's card is pointed at");
   assert.match(p.$("backToPerson").textContent, /zpět na Jana Nováková/);
   p.$("backToPerson").click();
   await waitFor(() => p.doc.querySelector("#peopleMain table.assignments"), "back on Jana's page (the same view)");

@@ -13,7 +13,7 @@ test("what is new: shown once with the running version's notes, not again after 
   assert.equal(p.$("whatsNewTitle").textContent, `Co je nového ve verzi ${notes.version}`);
   assert.deepEqual([...p.$("whatsNewMain").querySelectorAll("h2")].map(h => h.firstChild.textContent.trim()), [notes.version]);
   const items = p.$("whatsNewMain").querySelectorAll("li").length;
-  assert.ok(items > 0, "the notes as a list");  // a small release may have one item (2.0.9)
+  assert.ok(items > 0, "the notes as a list");  // a small release may have one item (2.0.10)
   assert.equal(items, notes.unseen[0].markdown.split("\n").filter(l => l.startsWith("- ")).length,
                "an item wrapped onto more lines stays one item");
   p.$("whatsNewClose").click();
