@@ -3,10 +3,10 @@
 Notes for each release, newest first, written by hand for the people using it. The heading format is fixed
 (`## <version> – <date>`); a test keeps an entry for the current version.
 
-## 2.0.8 – 2026-11-02
+## 2.0.9 – 2026-11-02
 
 - **Zkontrolovat aktualizace** in the window now gets an answer: the tray app of 2.0.7 did not notice the window's
-  request and the check ended with "neodpověděla". Until 2.0.8 is installed, use *Check for updates* in the tray
+  request and the check ended with "neodpověděla". Until 2.0.9 is installed, use *Check for updates* in the tray
   menu once.
 
 ## 2.0.7 – 2026-11-02
