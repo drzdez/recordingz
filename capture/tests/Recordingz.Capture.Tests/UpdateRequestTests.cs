@@ -26,6 +26,12 @@ public class UpdateRequestTests
             Assert.True(SpinWait.SpinUntil(() => asked.Contains("check"), 5000));
             Assert.True(SpinWait.SpinUntil(() => !File.Exists(path), 2000));
             Assert.DoesNotContain(asked, a => a != "check");
+
+            // the way the review server writes it (2.0.7 missed this: a temp file renamed into place)
+            var tmp = Path.Combine(dir, "update.tmp");
+            File.WriteAllText(tmp, "install");
+            File.Move(tmp, path);
+            Assert.True(SpinWait.SpinUntil(() => asked.Contains("install"), 5000), "a request renamed into place");
         }
         finally
         {

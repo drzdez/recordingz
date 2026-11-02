@@ -32,6 +32,8 @@ public static class UpdateRequest
             };
             w.Created += handler;
             w.Changed += handler;
+            // the review server writes a temp file and renames it into place (atomic): only Renamed fires then
+            w.Renamed += (s, e) => handler(s, e);
             w.EnableRaisingEvents = true;
             return w;
         }
