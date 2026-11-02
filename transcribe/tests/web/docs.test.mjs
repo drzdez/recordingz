@@ -32,6 +32,11 @@ test("help opens the guides from docs/, links between them stay inside, Esc clos
   const box = p.$("help"), main = p.$("helpMain");
   assert.ok(box.hidden);
   p.$("helpBtn").click();
+  assert.ok(!p.$("helpMenu").hidden && box.hidden, "Nápověda ▾ opens its menu first");
+  assert.deepEqual([...p.$("helpMenu").querySelectorAll("button")].map(b => b.textContent),
+                   ["Nápověda", "O aplikaci", "Zkontrolovat aktualizace"]);
+  p.$("helpMenu").querySelector('[data-help="guide"]').click();
+  assert.ok(p.$("helpMenu").hidden, "a pick closes the menu");
   await waitFor(() => main.querySelector("h1"), "the user guide");
   assert.ok(!box.hidden);
   assert.equal(p.$("helpPick").value, "user-guide");

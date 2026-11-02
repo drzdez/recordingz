@@ -219,7 +219,7 @@ def build_review(cfg: Config, rec: Recording) -> dict:
                 "speakers": [], "known_names": [], "people": [], "display_default": cfg.people_display,
                 "language": None, "speaker_sources": [], "has_summary": False,
                 "minutes_auto": cfg.summarize.enabled, "plans": plans(cfg), "choices": choices(cfg),
-                **call_offer(cfg, rec)}
+                "failure": read_failure(rec), **call_offer(cfg, rec)}
     data, segs = load_segments(rec)  # raw provider speakers, without speakers.json applied
     manual = rec.read_json(rec.speakers_path) if rec.speakers_path.exists() else {}
     people = People.load(cfg.out_dir, cfg.people_display)
@@ -295,6 +295,7 @@ def build_review(cfg: Config, rec: Recording) -> dict:
         "choices": choices(cfg),  # "Přepsat znovu od nuly": each step on this PC or in the cloud
         **call_offer(cfg, rec),
         "timings": timings.latest(rec),  # how long each part of the last jobs took
+        "failure": read_failure(rec),  # the last failed job, shown above the tabs until a run succeeds
         "export_folder": exports.folder_for(cfg.out_dir, rec.title),
         "minutes_problem": minutes_problem(cfg),  # the local minutes model is missing / Ollama is not running
         "minutes_pull": (cfg.summarize.model if settings.ollama_has(cfg.summarize.ollama_url, cfg.summarize.model) is False
@@ -359,6 +360,56 @@ def has_minutes(rec: Recording) -> bool:
     """Any minutes at all: the main one or one by another model (the list must not say "bez zápisu" when the only
     minutes are a Claude one)."""
     return rec.summary_path.exists() or any(rec.dir.glob(f"{rec.stem}.summary.*.md"))
+
+
+FAILURE_SUFFIX = ".failed.json"  # the last failed job of a recording, shown above its tabs until a run succeeds
+FAILURE_TEXT_MAX = 600
+_KEY_REFUSED = re.compile(r"\b([A-Z][A-Za-z]+) 401\b|invalid[ _]api[ _]key|authentication_error|unauthorized",
+                          re.IGNORECASE)
+
+
+def failure_hint(text: str) -> dict:
+    """What the user can do about a failure, when the text says it: a cloud service refused its API key."""
+    m = _KEY_REFUSED.search(text)
+    if not m:
+        return {}
+    vendor = m.group(1) or "Služba"
+    return {"key": True, "text": f"{vendor} odmítl klíč API (neplatný nebo zrušený). Zadejte platný klíč v "
+                                 f"Nastavení → Klíče API a spusťte zpracování znovu."}
+
+
+def write_failure(rec: Recording, job: str, text: str) -> None:
+    """A job of this recording failed: kept in <stem>.failed.json (not a sidecar: two dots), so the page shows it
+    above the tabs, also after the server or the window restarts."""
+    text = re.sub(r"^(error:\s*)+", "", text.strip())[:FAILURE_TEXT_MAX]
+    rec.write_json(rec.file(FAILURE_SUFFIX), {"job": job, "text": text,
+                                              "at": datetime.now().isoformat(timespec="seconds")})
+
+
+def clear_failure(rec: Recording, job: str | None = None) -> None:
+    """A job succeeded (or the user hid the message): the failure goes. With `job`, only a failure of that job, or
+    any when it is the whole processing (it redoes everything after it)."""
+    path = rec.file(FAILURE_SUFFIX)
+    if not path.exists():
+        return
+    if job and job != "process":
+        try:
+            if json.loads(path.read_text(encoding="utf-8")).get("job") != job:
+                return
+        except (OSError, ValueError):
+            pass
+    path.unlink(missing_ok=True)
+
+
+def read_failure(rec: Recording) -> dict | None:
+    path = rec.file(FAILURE_SUFFIX)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(data, dict) or not data.get("text"):
+        return None
+    return {**data, "hint": failure_hint(data["text"])}
 
 
 def summary_info(path: Path, main: bool, edited: str | None = None) -> dict:

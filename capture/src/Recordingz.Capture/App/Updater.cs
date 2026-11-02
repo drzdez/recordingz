@@ -108,6 +108,9 @@ public sealed class Updater : IDisposable
 
     public Release? Available { get; private set; }
 
+    /// <summary>Why the last check failed (null when it got an answer): a failed check is not "no new version".</summary>
+    public string? LastError { get; private set; }
+
     /// <summary>The version the user declined: no balloon for it again (the menu item stays).</summary>
     public static string? Declined
     {
@@ -131,6 +134,7 @@ public sealed class Updater : IDisposable
         {
             var json = await Http.GetStringAsync(UpdateLogic.LatestUrl);
             Set("UpdateLastCheck", DateTime.Now.ToString("s"));
+            LastError = null;
             var rel = UpdateLogic.Parse(json);
             if (rel is null || !UpdateLogic.IsNewer(rel.Version, Versions.AppVersion))
                 return null;
@@ -146,6 +150,7 @@ public sealed class Updater : IDisposable
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException or JsonException)
         {
             Log.Warn($"update check failed: {e.Message}");
+            LastError = e.Message;
             return null;
         }
         finally

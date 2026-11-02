@@ -347,7 +347,8 @@ combine (a meeting, a state and a time); **✕ smazat filtry** next to the count
 or use the wheel. The text filter also finds dates: `2026-09-03`, `3.9.2026`, or a regexp such as `2026-09-0[34]`. Typing the filter opens its first
 match; only with unsaved changes the open recording stays in the list (marked as open, outside the filter).
 
-Top tabs: **Schůzka** (the selected recording), **Lidé (společné)**, **Nastavení** and **Nápověda**. Inside Schůzka
+Top tabs: **Schůzka** (the selected recording), **Lidé (společné)**, **Nastavení** and **Nápověda ▾** (the guides,
+**O aplikaci** with the version and what is new, and **Zkontrolovat aktualizace**). Inside Schůzka
 are the sub-tabs **Mluvčí** (assigning names), **Přepis** (readable transcript with time and speaker) and **Zápis**
 (the minutes rendered from Markdown). The sub-tabs stay at the top while scrolling, and each keeps its own scroll
 position. Text is edited in the files; the page only shows it.

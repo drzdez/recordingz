@@ -182,6 +182,9 @@ def spec(version: str) -> dict:
             "/api/recordings/{stem}/voices": {"post": _op(
                 "Fast-track post-processing: local diarization lends voice embeddings to the groups of a cloud "
                 "transcript, then voice recognition runs (background job)", params=[STEM])},
+            "/api/recordings/{stem}/failure": {"delete": _op(
+                "Hide the recording's last failed job (the 'failure' of GET /api/recordings/{stem}); a run that "
+                "succeeds clears it too", params=[STEM])},
             "/api/recordings/{stem}/summaries/{file}/export": {
                 "get": _op("The folder remembered for this meeting name and the name of the copy", params=[STEM, {
                     "name": "file", "in": "path", "required": True, "schema": {"type": "string"}}]),
@@ -203,6 +206,13 @@ def spec(version: str) -> dict:
             "/api/system/sound-settings": {"post": _op("Open the Windows sound dialog (mmsys.cpl)", tags=("settings",))},
             "/api/help/{doc}": {"get": _op("A guide: user-guide | install | privacy", tags=("server",), params=[
                 {"name": "doc", "in": "path", "required": True, "schema": {"enum": ["user-guide", "install", "privacy"]}}])},
+            "/api/update": {
+                "get": _op("The capture app's last update check: {running (the capture app), state (checking | current | "
+                           "available | failed | installing, '' before any), current, available, message, at}",
+                           tags=("server",)),
+                "post": _op("Ask the capture app to look for a new version now (check) or to offer installing it "
+                            "(install, with its own confirmation); 400 when it does not run", tags=("server",),
+                            body=_obj(action=s))},
             "/api/release-notes": {"get": _op(
                 "Release notes from CHANGELOG.md: {version (running), notes: [{version, date, markdown}] newest first, "
                 "unseen: the notes newer than the version last seen, up to the running one (after a fresh install only "

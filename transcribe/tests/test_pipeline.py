@@ -94,9 +94,12 @@ def test_openai_diarized_segments_and_errors(monkeypatch, tmp_path):
 
 
 def test_cloud_provider_without_a_key_says_which_variable(monkeypatch, tmp_path):
+    from recordingz import settings
     from recordingz.providers import ProviderError, get_provider
+    from test_settings import FakeVault
     for v in ("RECORDINGZ_ELEVENLABS_API_KEY", "ELEVENLABS_API_KEY"):
         monkeypatch.delenv(v, raising=False)
+    monkeypatch.setattr(settings, "_keyring", lambda: FakeVault())  # a key stored on this PC must not count
     with pytest.raises(ProviderError, match="RECORDINGZ_ELEVENLABS_API_KEY"):
         get_provider("elevenlabs").transcribe(tmp_path / "a.wav", language=None, prompt=None,
                                               settings=TranscribeSettings(), diarize=True)

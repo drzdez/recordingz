@@ -20,7 +20,7 @@ from ..config import Config, default_config_path
 from ..fasttrack import choices, cloud_ready  # the emergency fast track, separate from the local path
 from ..fileio import atomic_write_text
 from ..recording import Recording, find_recording
-from .views import has_minutes
+from .views import clear_failure, has_minutes, write_failure
 
 log = logging.getLogger(__name__)
 
@@ -361,6 +361,7 @@ class ReviewState:
     def _finished(self, job: dict, ok: bool, text: str) -> None:
         """A job ended: remembered for the tray's balloon, with what came out of it."""
         stem = job.get("stem") or ""
+        self._keep_failure(job, ok, text)
         if ok and job.get("name") == "process" and stem:
             try:
                 rec = find_recording(stem, self.cfg.out_dir)
@@ -372,6 +373,20 @@ class ReviewState:
             self.finished = (self.finished + [{"id": job["id"], "name": job.get("name", ""), "stem": stem,
                                                "title": _title_of(self.cfg, stem), "ok": ok, "text": text,
                                                "at": datetime.now().isoformat(timespec="seconds")}])[-FINISHED_KEPT:]
+
+    def _keep_failure(self, job: dict, ok: bool, text: str) -> None:
+        """The recording remembers its last failed job (<stem>.failed.json) until a run of it succeeds."""
+        stem, name = job.get("stem") or "", job.get("name", "")
+        if not stem:
+            return
+        try:
+            rec = find_recording(stem, self.cfg.out_dir)
+            if ok:
+                clear_failure(rec, name)
+            else:
+                write_failure(rec, name, job.get("failure") or text)
+        except Exception as e:  # the recording went (deleted, trashed): nothing to show it on
+            log.debug("failure of %s not kept: %s", stem, e)
 
     def _push_jobs(self) -> None:
         self.write_jobs_file()
@@ -455,10 +470,12 @@ class ReviewState:
                 if job.get("errors"):  # the job ended, but a part of it failed (typically the local minutes)
                     first = job["errors"][0].split(": ", 1)[-1]
                     outcome = (f"{done}: {stem}, ale část se nepodařila – {first}", "err")
+                    job["failure"] = f"část se nepodařila – {first}"
             except Exception as e:  # shown on the page, not fatal
                 with self.lock:
                     self.error = str(e)
                 outcome = (f"{name} selhalo: {e}", "err")
+                job["failure"] = str(e)
             finally:
                 logging.getLogger("recordingz").removeHandler(errors)
                 if name == "pull":

@@ -3,12 +3,17 @@
 Notes for each release, newest first, written by hand for the people using it. The heading format is fixed
 (`## <version> – <date>`); a test keeps an entry for the current version.
 
-## 2.0.6 – 2026-10-23
+## 2.0.7 – 2026-11-02
 
 - **From one meeting straight to the next**: the recording of the first one now ends as soon as Teams opens the join
   screen of the next (Teams keeps the microphone across, so the call never looked ended and the next meeting was
   recorded into the first one). The next meeting gets its own recording, with its own title, once you join.
 - The log file no longer loses lines: the screen capture and the app wrote over each other's lines.
+- **A failed processing stays in sight**: a red bar above the Mluvčí, Přepis and Zápis tabs says what failed and
+  when, also after the window is opened again, until a run succeeds or you hide it. When a cloud service refuses its
+  API key, the bar says so and opens the settings (before, the error was only in the status line at the bottom).
+- **Nápověda ▾** is now a menu: Nápověda, O aplikaci and **Zkontrolovat aktualizace**. The check asks the tray app
+  (as its *Check for updates* does) and O aplikaci then says whether you are up to date or offers **Nainstalovat X**.
 
 ## 2.0.5 – 2026-10-16
 

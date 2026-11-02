@@ -124,6 +124,11 @@ def test_review_page(script, tmp_path, monkeypatch):
                                                              "replies": vecs}), encoding="utf-8")
             return
         rec = find_recording(args[1], tmp_path)
+        fail = rec.file(".fail-next")  # a page test makes the next job of a recording fail with this text
+        if fail.exists():
+            text = fail.read_text(encoding="utf-8")
+            fail.unlink()
+            raise RuntimeError(text)
         if args[0] == "process":
             _fake_process(cfg, rec, force="--force" in args)
         elif args[0] == "summary":
@@ -131,6 +136,9 @@ def test_review_page(script, tmp_path, monkeypatch):
         else:
             fake_summarize_as(cfg, rec, args[args.index("--provider") + 1], args[args.index("--model") + 1])
     monkeypatch.setattr(jobs, "run_cli", fake_run_cli)
+    from recordingz.web import updates  # the capture app's update request and answer: the test plays the app
+    monkeypatch.setattr(updates, "UPDATE_REQUEST", tmp_path / "recordingz-update.request")
+    monkeypatch.setattr(updates, "UPDATE_STATE", tmp_path / "recordingz-update.json")
     srv, state, base = _serve(tmp_path)
     capture_file = tmp_path / "recordingz-capture.json"  # the test's own capture status, never the real one
     stop = threading.Event()
@@ -138,7 +146,8 @@ def test_review_page(script, tmp_path, monkeypatch):
     try:
         run = subprocess.run([NODE, "--test", "--test-reporter=spec", str(WEB / script)], cwd=WEB,
                              env={**os.environ, "RECORDINGZ_REVIEW_URL": base, "RECORDINGZ_TEST_CONFIG": str(cfg_file),
-                                  "RECORDINGZ_TEST_CAPTURE": str(capture_file), "RECORDINGZ_TEST_PID": str(os.getpid())},
+                                  "RECORDINGZ_TEST_CAPTURE": str(capture_file), "RECORDINGZ_TEST_PID": str(os.getpid()),
+                                  "RECORDINGZ_TEST_OUT": str(tmp_path)},
                              capture_output=True,
                              text=True, encoding="utf-8", errors="replace", timeout=120)
     finally:

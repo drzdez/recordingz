@@ -40,7 +40,8 @@ Keys go into the Windows Credential Manager, never into files. The wizard opens 
 (about 3 GB, once). Ollama itself is a separate program from [ollama.com](https://ollama.com) (the wizard says when
 it is missing).
 
-**Updates:** the tray app looks for a new release once a day and offers it (*Install version …*). The update replaces
+**Updates:** the tray app looks for a new release once a day and offers it (*Install version …*); to check now, use
+*Check for updates* in its menu or **Nápověda ▾ → Zkontrolovat aktualizace** in the window. The update replaces
 the programs; the next start of the window brings the environment up to date (only what changed is downloaded).
 Uninstalling (Settings → Apps) removes the programs; the environment, the downloaded models and your recordings stay
 (delete `%LOCALAPPDATA%\recordingz` by hand to remove the environment).
@@ -112,7 +113,9 @@ A grey icon appears in the tray; it is red while recording, yellow means no soun
 the review page; **Settings…** opens its Nastavení.
 
 **Updates:** the app looks for a newer release at start and then once a day (`[capture] update_check`). When there is
-one, a balloon offers it and the tray menu gets **Install version X…**; **Check for updates** asks right away. After a
+one, a balloon offers it and the tray menu gets **Install version X…**; **Check for updates** asks right away, and so
+does **Nápověda ▾ → Zkontrolovat aktualizace** on the review page (the page asks the tray app, which must be running,
+and offers **Nainstalovat X** in O aplikaci). After a
 confirmation the app downloads the MSI, checks its size and SHA-256 against the release, and runs it: the installer
 quits the app and starts the new version. Never during a recording – the offer comes after it. A declined version gets
 no more balloons, only the menu item. Running a newer MSI by hand works the same way; during a recording the app

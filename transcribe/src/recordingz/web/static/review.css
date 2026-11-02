@@ -240,6 +240,20 @@ main.doc a { color: var(--accent); }
 .tabs button { border: 1px solid var(--line); background: transparent; color: var(--fg); padding: 5px 12px; cursor: pointer; font: inherit; }
 .tabs button:first-child { border-radius: 8px 0 0 8px; } .tabs button:last-child { border-radius: 0 8px 8px 0; }
 .tabs button.active { background: var(--accent); color: var(--accent-fg); border-color: transparent; }
+/* Nápověda ▾: Nápověda, O aplikaci, Zkontrolovat aktualizace */
+.helpWrap { position: relative; display: flex; }
+.tabs .helpWrap > button { border-radius: 0 8px 8px 0; }
+.helpMenu { position: absolute; right: 0; top: calc(100% + 4px); z-index: 30; display: flex; flex-direction: column;
+            min-width: 220px; padding: 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--card);
+            box-shadow: 0 6px 18px rgba(0, 0, 0, .25); }
+.helpMenu[hidden] { display: none; }
+.tabs .helpMenu button { border: 0; border-radius: 6px; text-align: left; padding: 7px 10px; white-space: nowrap; }
+.tabs .helpMenu button:hover, .tabs .helpMenu button:focus-visible { background: var(--chip); }
+.updateBox { margin: 8px 0 16px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; }
+.updateBox .updateLine { margin: 6px 0 0; }
+.updateBox .updateLine.ok { color: var(--ok); }
+.updateBox .updateLine.err { color: var(--err); }
+.updateBox button { margin-right: 8px; }
 .meta { color: var(--muted); font-size: 13px; }
 main { max-width: 1000px; margin: 0 auto; padding: 16px 20px 120px; }
 .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; margin: 12px 0;
@@ -410,6 +424,15 @@ main.doc .stamp { color: var(--muted); font-size: 12px; }
 .queueBanner.running .state { color: var(--warn); }
 .queueBanner .queueActs { margin: 0 0 0 auto; gap: 6px; }
 .queueBanner .queueActs button { padding: 3px 10px; font-size: 12px; }
+.failBanner { order: -1; flex-basis: 100%; display: flex; align-items: baseline; gap: 4px 12px; flex-wrap: wrap;
+  margin-bottom: 8px; padding: 8px 12px; border: 1px solid var(--err); border-left-width: 4px; border-radius: 6px;
+  background: var(--card); font-size: 13px; }
+.failBanner .state { color: var(--err); font-weight: 600; }
+.failBanner .note { color: var(--muted); }
+.failBanner .hint { flex-basis: 100%; font-weight: 600; }
+.failBanner .why { flex-basis: 100%; color: var(--muted); font-size: 12px; overflow-wrap: anywhere; }
+.failBanner .queueActs { margin: 0 0 0 auto; gap: 6px; }
+.failBanner .queueActs button { padding: 3px 10px; font-size: 12px; }
 /* stands out while any filter is on: the list is not complete */
 #clearFilters { border: 1px solid transparent; background: var(--warn); color: #111111; border-radius: 999px;
                 padding: 3px 12px; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap;

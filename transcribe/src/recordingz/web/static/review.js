@@ -12,7 +12,7 @@
  * @typedef {{source:string,subject:string,organizer:string,start:string,end:string,match:string,status:string,candidates:Candidate[]}} Calendar
  * @typedef {{title:string,title_source:string,calendar:Calendar|null,participants:{name:string,source:string}[],outlook_enabled:boolean,start:string}} Meeting
  * @typedef {{person:string,labels:string[],name:string}} SamePerson
- * @typedef {{stem:string,title:string,start:string,duration_s:number,source:string,transcribed:boolean,language:string|null,speaker_sources:string[],has_summary:boolean,has_mix:boolean,speakers:Speaker[],known_names:string[],people:Person[],display_default:string,meeting?:Meeting,same_person?:SamePerson[],can_unmerge?:boolean,edited?:string|null,export_folder?:string,minutes_auto?:boolean,dir?:string,md_viewer?:string,minutes_problem?:string,minutes_pull?:string,timings?:any[],voices_missing?:boolean,voices_mixed?:string[],cloud?:{ok:boolean,missing:string,provider:string,model:string},transcribed_with?:{provider:string,model:string,languages:string[],unaligned?:boolean}}} Review
+ * @typedef {{stem:string,title:string,start:string,duration_s:number,source:string,transcribed:boolean,language:string|null,speaker_sources:string[],has_summary:boolean,has_mix:boolean,speakers:Speaker[],known_names:string[],people:Person[],display_default:string,meeting?:Meeting,same_person?:SamePerson[],can_unmerge?:boolean,edited?:string|null,export_folder?:string,minutes_auto?:boolean,dir?:string,md_viewer?:string,minutes_problem?:string,minutes_pull?:string,timings?:any[],voices_missing?:boolean,voices_mixed?:string[],failure?:{job:string,text:string,at:string,hint?:{key?:boolean,text?:string}}|null,cloud?:{ok:boolean,missing:string,provider:string,model:string},transcribed_with?:{provider:string,model:string,languages:string[],unaligned?:boolean}}} Review
  * @typedef {{stem:string,title:string,start:string,transcribed:boolean,unresolved:number|null,summary?:boolean,unaligned?:boolean,edited?:string|null}} RecordingRow
  */
 
@@ -559,6 +559,7 @@ async function loadRecording(/** @type {string} */ stem) {
     meta.textContent = `${fmtDate(r.start)} · ${Math.round((r.duration_s || 0) / 60)} min · bez přepisu`;
     showSub("speakers", false);
     renderNotTranscribed(r);
+    renderFailBanner();
     markClean();  // the title can be changed and saved right after recording
     return;
   }
@@ -690,12 +691,47 @@ async function moveJob(/** @type {number} */ id, /** @type {string} */ how, /** 
   } catch (e) { setStatus(String(e), "err"); btn.disabled = false; }
 }
 
+/** The last failed job of the open recording (<stem>.failed.json): pinned with the sub-tabs, so it stays in sight on
+ * Mluvčí, Přepis and Zápis until a run of it succeeds or Skrýt; not while the recording waits or runs again. A refused
+ * API key says where to fix it. */
+function renderFailBanner() {
+  const old = document.getElementById("failBanner");
+  if (old) old.remove();
+  const f = review && review.failure;
+  if (!review || !f || queuePlace(review.stem)) return;
+  const stem = review.stem;
+  const bar = document.createElement("div"); bar.id = "failBanner"; bar.className = "failBanner"; bar.setAttribute("role", "alert");
+  bar.innerHTML = `<span class="state">⚠ ${escapeHtml(JOB_NAME[f.job] || f.job || "zpracování")} selhalo</span>`
+    + `<span class="note">${escapeHtml(String(f.at || "").replace("T", " ").slice(0, 16))}</span>`
+    + (f.hint && f.hint.text ? `<span class="hint">${escapeHtml(f.hint.text)}</span>` : "")
+    + `<span class="why">${escapeHtml(f.text)}</span>`;
+  const row = document.createElement("p"); row.className = "queueActs";
+  if (f.hint && f.hint.key) {
+    const keys = document.createElement("button"); keys.type = "button"; keys.textContent = "Otevřít Nastavení";
+    keys.onclick = () => $("settingsBtn").click();
+    row.appendChild(keys);
+  }
+  const hide = document.createElement("button"); hide.type = "button"; hide.textContent = "Skrýt";
+  hide.title = "Zpráva zmizí i sama, až zpracování proběhne";
+  hide.onclick = async () => {
+    hide.disabled = true;
+    try { await api(recUrl(stem, "failure"), send("DELETE")); }
+    catch (e) { setStatus(String(e), "err"); hide.disabled = false; return; }
+    if (review && review.stem === stem) review.failure = null;
+    renderFailBanner();
+  };
+  row.appendChild(hide);
+  bar.appendChild(row);
+  $("subtabs").appendChild(bar);
+}
+
 /** A transcribed recording in the queue: a slim line pinned with the sub-tabs (the page stays readable and
  * editable – nothing changes until its turn). Once its processing starts, the old state is going away: the page
  * empties to the same "being processed" view as a new recording, with the queue buttons, and saving is off. */
 function renderQueueBanner() {
   const old = document.getElementById("queueBanner");
   if (old) old.remove();
+  renderFailBanner();
   const q = review && review.transcribed ? queuePlace(review.stem) : null;
   // only a new transcript replaces what the page shows; minutes and voices leave the transcript as it is
   const rewriting = !!(q && q.running && q.name === "process");
@@ -2962,17 +2998,90 @@ async function openAbout() {
   helpMain.innerHTML = `<h1>recordingz <span id="aboutVersion">${escapeHtml(r.version)}</span></h1>
 <p>Nahrávání schůzek v Teams, přepis, mluvčí a zápisy. <a href="https://github.com/drzdez/recordingz">Stránka projektu</a> ·
 <a href="https://github.com/drzdez/recordingz/releases">Vydání</a></p>
+<div class="updateBox" id="updateBox"><button type="button" id="updateCheck" class="play">Zkontrolovat aktualizace</button>
+<button type="button" id="updateInstall" class="primary-btn" hidden></button><p class="updateLine" id="updateLine" hidden></p></div>
 <h1>Co je nového</h1>
 ${r.notes.length ? releaseNotesHtml(r.notes) : '<p class="meta">Poznámky k vydání tu nejsou (chybí CHANGELOG.md).</p>'}`;
   helpBox.scrollTop = 0;
   externalLinks(helpMain);
+  $("updateCheck").onclick = () => askUpdate("check");
+  $("updateInstall").onclick = () => askUpdate("install");
+  showUpdate(await updateState());
+  if (checkOnOpen) { checkOnOpen = false; askUpdate("check"); }
+}
+
+// ---- updates: the capture app (tray) checks GitHub and installs; the page asks it through the server (/api/update)
+let checkOnOpen = false;
+const UPDATE_WAIT_S = 30;
+async function updateState() {
+  try { return await api("/api/update"); } catch (e) { return { running: true, state: "failed", message: String(e) }; }
+}
+/** The update line in O aplikaci: what the last check said, and Nainstalovat … when there is something newer. */
+function showUpdate(/** @type {any} */ u) {
+  const line = document.getElementById("updateLine");
+  const install = /** @type {HTMLButtonElement|null} */ (document.getElementById("updateInstall"));
+  if (!line || !install) return;
+  const say = (/** @type {string} */ text, /** @type {string} */ cls = "") => {
+    line.hidden = !text; line.textContent = text; line.className = "updateLine " + cls;
+  };
+  install.hidden = true;
+  const at = u.at ? ` (zjištěno ${String(u.at).replace("T", " ").slice(0, 16)})` : "";
+  if (!u.running) return say("Aplikace recordingz pro nahrávání neběží – aktualizace hledá a instaluje ona. "
+                             + "Spusťte ji (nabídka Start) a zkuste to znovu.", "err");
+  if (u.state === "checking") return say(u.message || "Hledám novější verzi…");
+  if (u.state === "current") return say(`Máte nejnovější verzi ${u.current}${at}.`, "ok");
+  if (u.state === "failed") return say(u.message || "Kontrola se nepodařila.", "err");
+  if (u.state === "installing") return say(u.message || `Instaluji ${u.available}…`);
+  if (u.state === "available") {
+    install.hidden = false;
+    install.textContent = `Nainstalovat ${u.available}`;
+    return say(`K dispozici je verze ${u.available} (máte ${u.current}).${u.message ? " " + u.message : ""}`, "ok");
+  }
+  say("");
+}
+/** check / install: the request goes to the capture app; its answer comes in a file, so the page asks until it changes */
+async function askUpdate(/** @type {string} */ action) {
+  const before = await updateState();
+  const check = /** @type {HTMLButtonElement|null} */ (document.getElementById("updateCheck"));
+  try { await api("/api/update", send("POST", { action })); }
+  catch (e) { showUpdate({ ...before, state: "failed", message: String(e) }); return; }
+  if (check) check.disabled = true;
+  showUpdate({ ...before, state: action === "check" ? "checking" : "installing", message: "Ptám se aplikace recordingz…" });
+  try {
+    for (let i = 0; i < UPDATE_WAIT_S * 2; i++) {
+      await new Promise(done => setTimeout(done, 500));
+      const u = await updateState();
+      if (u.at && u.at !== before.at && u.state !== "checking") { showUpdate(u); return; }  // a new answer
+    }
+    showUpdate({ ...before, state: "failed",
+                 message: "Aplikace recordingz neodpověděla – zkuste to z nabídky její ikony (Check for updates)." });
+  } finally { if (check) check.disabled = false; }
 }
 
 function closeHelp() { helpBox.hidden = true; }
-$("helpBtn").onclick = () => openHelp(helpPick.value || "user-guide");
+// Nápověda ▾: the guides (the one read last), O aplikaci, or O aplikaci checking for updates right away
+const helpMenu = $("helpMenu");
+function toggleHelpMenu(/** @type {boolean} */ open) {
+  helpMenu.hidden = !open;
+  $("helpBtn").setAttribute("aria-expanded", String(open));
+}
+$("helpBtn").onclick = ev => { ev.stopPropagation(); toggleHelpMenu(helpMenu.hidden); };
+for (const item of /** @type {NodeListOf<HTMLButtonElement>} */ (helpMenu.querySelectorAll("button[data-help]")))
+  item.onclick = () => {
+    toggleHelpMenu(false);
+    const what = item.dataset.help;
+    if (what === "update") checkOnOpen = true;
+    openHelp(what === "guide" ? (helpPick.value && helpPick.value !== "about" ? helpPick.value : "user-guide") : "about");
+  };
+document.addEventListener("click", ev => {
+  if (!helpMenu.hidden && !helpMenu.contains(/** @type {Node} */ (ev.target))) toggleHelpMenu(false);
+});
 $("helpClose").onclick = closeHelp;
 helpPick.onchange = () => openHelp(helpPick.value);
-document.addEventListener("keydown", ev => { if (ev.key === "Escape" && !helpBox.hidden) closeHelp(); });
+document.addEventListener("keydown", ev => {
+  if (ev.key === "Escape" && !helpMenu.hidden) toggleHelpMenu(false);
+  else if (ev.key === "Escape" && !helpBox.hidden) closeHelp();
+});
 setInterval(() => { fetch("/api/ping", { method: "POST" }).catch(() => {}); }, 15000);
 
 // ---- a dropdown of known values plus "jiný…" for anything else (models, microphones)

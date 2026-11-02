@@ -32,7 +32,7 @@ test("help → O aplikaci: the version and the notes of every release", async t 
   const notes = await server("/api/release-notes");
   const p = await openPage(t);
   p.$("helpBtn").click();
-  p.change(p.$("helpPick"), "about");
+  p.$("helpMenu").querySelector('[data-help="about"]').click();
   const main = p.$("helpMain");
   await waitFor(() => main.querySelector("#aboutVersion"), "the about page");
   assert.equal(main.querySelector("#aboutVersion").textContent, notes.version);

@@ -728,3 +728,50 @@ def test_jobs_status_file_tells_the_tray_what_runs_and_what_ended(tmp_path, monk
     assert d["finished"][-1]["text"] == "přepis hotový; zápis počká, až pojmenujete mluvčí"
     st.write_jobs_file(running=False)
     assert json.loads(st.jobs_file.read_text(encoding="utf-8"))["running"] is False
+
+
+def test_a_failed_job_stays_with_its_recording_until_a_run_succeeds(tmp_path, monkeypatch):
+    # 2026-11-02: the ElevenLabs 401 of a fast-track run was only in the status line, gone with the next message
+    import time
+    from recordingz.web import jobs, views
+    cfg = Config(out_dir=tmp_path)
+    rec = Recording.load(_make_recording(tmp_path))
+    answers = [RuntimeError('error: ElevenLabs 401: {"detail":{"message":"Invalid API key"}}'), None]
+
+    def run_cli(argv, on_proc, on_line):
+        a = answers.pop(0)
+        if a:
+            raise a
+    monkeypatch.setattr(jobs, "run_cli", run_cli)
+    st = jobs.ReviewState(cfg)
+
+    def wait():
+        for _ in range(100):
+            if not st.status()["busy"] and any(e.get("job_end") for e in st.status()["events"]):
+                return
+            time.sleep(0.02)
+    st.run_process(rec)
+    wait()
+    f = views.build_review(cfg, rec)["failure"]
+    assert f["job"] == "process" and f["text"].startswith("ElevenLabs 401: "), "kept without the 'error:' prefix"
+    assert f["hint"]["key"] and "Nastavení → Klíče API" in f["hint"]["text"]
+    assert rec.file(".failed.json").exists() and not views.is_sidecar(rec.file(".failed.json")) \
+        if hasattr(views, "is_sidecar") else True
+    st.events.clear()
+    st.run_process(rec)
+    wait()
+    assert views.build_review(cfg, rec)["failure"] is None, "a run that succeeds clears it"
+
+
+def test_failure_hint_and_clear_only_the_same_job(tmp_path):
+    from recordingz.recording import is_sidecar
+    from recordingz.web import views
+    rec = Recording.load(_make_recording(tmp_path))
+    assert views.failure_hint("OpenAI 401: unauthorized")["text"].startswith("OpenAI odmítl klíč API")
+    assert views.failure_hint("disk full") == {}
+    views.write_failure(rec, "summary", "error: Ollama is not running")
+    assert not is_sidecar(rec.file(views.FAILURE_SUFFIX)), "never taken for a recording"
+    views.clear_failure(rec, "voices")
+    assert views.read_failure(rec)["text"] == "Ollama is not running", "another job's success leaves it"
+    views.clear_failure(rec, "process")
+    assert views.read_failure(rec) is None, "the whole processing redoes the minutes too"

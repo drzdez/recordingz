@@ -66,6 +66,8 @@ REST API (described in web/openapi.py, served at /api/openapi.json)
   GET    /api/settings/models                          the model lists asked live (Ollama on this PC, Claude API)
   GET    /api/help/{doc}                               user-guide | install | privacy
   GET    /api/release-notes                            {version, notes, unseen} from CHANGELOG.md
+  GET    /api/update                                   the capture app's last update check {running, state, current, available}
+  POST   /api/update                                   {action: check|install}: passed on to the capture app
   POST   /api/release-notes/seen                       the running version's notes were seen (not shown again)
   GET    /api/status                                   job state + recent events + what the capture app records
   GET    /api/events                                   Server-Sent Events (event: log), replayed after reconnects
@@ -101,13 +103,13 @@ from ..pipeline import (NEW_SPEAKER, assign_segments, speaker_replies, do_export
                         summary_path_for, meeting_info, merge_same_person, recognize_voices, remove_speaker,
                         set_meeting_link, unmerge_speakers)
 from .. import exports, trash
-from . import release_notes
+from . import release_notes, updates
 from ..fasttrack import needs_voices  # the emergency fast track, separate from the local path
 from ..recording import Recording, RecordingError, find_recording
 from .jobs import JOBS_STATUS, ReviewState, _capture_watch
 from .people_views import (confirm_candidate, forget_print, merge_people, people_rows, person_detail,
                            reassign_candidate, reject_candidate, sample_action, save_people)
-from .views import (CLIP_MAX_S, RECENT_RECORDINGS, build_review, clip_wav, copy_doc, delete_summary, help_doc,
+from .views import (CLIP_MAX_S, clear_failure, RECENT_RECORDINGS, build_review, clip_wav, copy_doc, delete_summary, help_doc,
                     list_recordings, open_doc, read_doc, recording_docs, recording_speakers, save_names, save_title,
                     trash_state)
 
@@ -136,6 +138,7 @@ ROUTES = [  # (method, path pattern, handler method) - keep web/openapi.py in st
     ("PUT", rf"/api/recordings/{STEM_RE_PART}/title", "save_title"),
     ("POST", rf"/api/recordings/{STEM_RE_PART}/process", "process"),
     ("POST", rf"/api/recordings/{STEM_RE_PART}/voices", "voices"),
+    ("DELETE", rf"/api/recordings/{STEM_RE_PART}/failure", "hide_failure"),
     ("POST", rf"/api/recordings/{STEM_RE_PART}/recognize", "recognize"),
     ("POST", rf"/api/recordings/{STEM_RE_PART}/summaries", "summarize_as"),
     ("POST", rf"/api/recordings/{STEM_RE_PART}/minutes-prompt", "minutes_prompt"),
@@ -185,6 +188,8 @@ ROUTES = [  # (method, path pattern, handler method) - keep web/openapi.py in st
     ("POST", r"/api/jobs/(?P<job>[^/]+)/cancel", "job_cancel"),
     ("GET", r"/api/help/(?P<doc>[^/]+)", "help"),
     ("GET", r"/api/release-notes", "release_notes"),
+    ("GET", r"/api/update", "update_state"),
+    ("POST", r"/api/update", "update_request"),
     ("POST", r"/api/release-notes/seen", "release_notes_seen"),
     ("GET", r"/api/status", "status"),
     ("GET", r"/api/events", "events"),
@@ -423,6 +428,10 @@ def _handler(state: ReviewState, server_ref: dict):
                                           light=provider != "ollama")  # the cloud: may run during a recording
             self._json({"ok": True, "job": job, "position": position, "jobs": state.jobs_state(),
                         "file": summary_path_for(state.cfg, rec, provider, model).name})
+
+        def r_hide_failure(self, q, body, stem):
+            clear_failure(self._recording(stem))  # Skrýt: the user has read it
+            self._json({"ok": True})
 
         def r_delete_summary(self, q, body, stem, file):
             rec = self._recording(stem)
@@ -689,6 +698,12 @@ def _handler(state: ReviewState, server_ref: dict):
 
         def r_release_notes(self, q, body):
             self._json(release_notes.state(release_notes.running_version(), state.settings_path))
+
+        def r_update_state(self, q, body):
+            self._json(updates.state(getattr(state, "capture", {})))
+
+        def r_update_request(self, q, body):
+            self._json(updates.request(str(body.get("action", "")), getattr(state, "capture", {})))
 
         def r_release_notes_seen(self, q, body):
             self._json({"ok": True, "seen": release_notes.mark_seen(release_notes.running_version(), state.settings_path)})

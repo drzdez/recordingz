@@ -29,6 +29,7 @@ public sealed class TrayApp : ApplicationContext, INotifier
     private readonly SettingsServer _settings;
     private readonly ConfigWatcher _watcher;  // edits from the review page's settings apply without a restart
     private readonly FileSystemWatcher? _quitRequest;  // the installer asks to quit before replacing the files
+    private readonly FileSystemWatcher? _updateRequest;  // the review page: Nápověda → O aplikaci → check / install
     private bool _quitting;
     private readonly Updater _updater;
     private Release? _balloonUpdate;  // the balloon on screen offers this release (a click installs it)
@@ -102,6 +103,7 @@ public sealed class TrayApp : ApplicationContext, INotifier
                 OpenReview(stem: _balloonStem);
         };
         _updater = new Updater(cfg, rel => OnUi(() => OnUpdateFound(rel)));
+        _updateRequest = UpdateRequest.Watch(Path.GetTempPath(), action => OnUi(() => OnUpdateRequest(action)));
         // Windows ends the session (logoff, restart, shutdown): close a running recording properly first
         Microsoft.Win32.SystemEvents.SessionEnding += (_, _) => OnSessionEnding();
         _reviewPoll.Tick += (_, _) => PollReview();
@@ -358,6 +360,31 @@ public sealed class TrayApp : ApplicationContext, INotifier
         });
     }
 
+    /// <summary>The review page asks (UpdateRequest): "check" looks now, like the menu item, and answers in the state
+    /// file instead of a balloon; "install" offers the newer version with the same question as the tray.</summary>
+    private void OnUpdateRequest(string action)
+    {
+        Log.Info($"the review page asks to {action} an update");
+        if (action == "install" && _updater.Available is { } known)
+        {
+            InstallUpdate(known);
+            return;
+        }
+        UpdateRequest.WriteState("checking", null, "");
+        Task.Run(async () =>
+        {
+            var rel = await _updater.CheckAsync();
+            if (rel is not null)
+                UpdateRequest.WriteState("available", rel.Version, "");
+            else if (_updater.LastError is { } error)
+                UpdateRequest.WriteState("failed", null, $"Kontrola se nepodařila: {error}");
+            else
+                UpdateRequest.WriteState("current", null, "");
+            if (action == "install" && rel is not null)
+                OnUi(() => InstallUpdate(rel));
+        });
+    }
+
     /// <summary>Confirm, download, verify, run the MSI (which quits this app and starts the new one). Not while
     /// recording: the install would have to stop it.</summary>
     private void InstallUpdate(Release rel)
@@ -365,8 +392,10 @@ public sealed class TrayApp : ApplicationContext, INotifier
         if (_loop.Recording)
         {
             Notify("Novou verzi nainstalujte po skončení nahrávání (menu ikony).");
+            UpdateRequest.WriteState("available", rel.Version, "Právě se nahrává – novou verzi nainstalujte po schůzce.");
             return;
         }
+        UpdateRequest.WriteState("installing", rel.Version, "Potvrďte instalaci v okně recordingz (může být za tímto oknem).");
         Task.Run(async () =>
         {
             var answer = Dialogs.AskYesNo($"Nainstalovat recordingz {rel.Version}? Teď máte {Versions.AppVersion}.\n\n" +
@@ -375,14 +404,17 @@ public sealed class TrayApp : ApplicationContext, INotifier
             {
                 if (UpdateLogic.Declines(answer))  // a box that closed by itself offers the version again
                     Updater.Declined = rel.Version;
+                UpdateRequest.WriteState("available", rel.Version, "Instalace nezačala (bez potvrzení).");
                 return;
             }
             if (_loop.Recording)  // a call may have started while the box was open
             {
                 Notify("Nahrávání právě začalo – novou verzi nainstalujte po něm (menu ikony).");
+                UpdateRequest.WriteState("available", rel.Version, "Právě se nahrává – novou verzi nainstalujte po schůzce.");
                 return;
             }
             Notify($"Stahuji recordingz {rel.Version}…");
+            UpdateRequest.WriteState("installing", rel.Version, $"Stahuji a instaluji {rel.Version}; aplikace se pak sama znovu spustí.");
             try
             {
                 await Updater.InstallAsync(rel);
@@ -391,6 +423,7 @@ public sealed class TrayApp : ApplicationContext, INotifier
             {
                 FileLog.Exception("update install", e);
                 Notify($"Novou verzi se nepodařilo nainstalovat: {e.Message}");
+                UpdateRequest.WriteState("failed", rel.Version, $"Novou verzi se nepodařilo nainstalovat: {e.Message}");
             }
         });
     }
@@ -458,6 +491,7 @@ public sealed class TrayApp : ApplicationContext, INotifier
             _icon.Dispose();
             _watcher.Dispose();
             _quitRequest?.Dispose();
+            _updateRequest?.Dispose();
             _updater.Dispose();
             _settings.Dispose();
             _loop.Dispose();

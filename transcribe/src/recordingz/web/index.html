@@ -33,7 +33,13 @@
     <button id="tabSpeakers" class="active" type="button">Schůzka</button>
     <button id="tabPeople" type="button">Lidé (společné)</button>
     <button id="settingsBtn" type="button" title="nastavení přepisu, zápisu, nahrávání a klíče API (sdílený recordingz.toml)">Nastavení</button>
-    <button id="helpBtn" type="button" title="uživatelská příručka, instalace a konfigurace, soukromí">Nápověda</button>
+    <span class="helpWrap"><button id="helpBtn" type="button" aria-haspopup="menu" aria-expanded="false"
+      title="nápověda, o aplikaci a kontrola aktualizací">Nápověda ▾</button>
+      <div id="helpMenu" class="helpMenu" role="menu" hidden>
+        <button type="button" role="menuitem" data-help="guide" title="uživatelská příručka, instalace a konfigurace, soukromí">Nápověda</button>
+        <button type="button" role="menuitem" data-help="about" title="verze a co je nového">O aplikaci</button>
+        <button type="button" role="menuitem" data-help="update" title="zeptá se aplikace recordingz, jestli je novější verze, a nabídne instalaci">Zkontrolovat aktualizace</button>
+      </div></span>
   </div>
   </div>
 </header>
