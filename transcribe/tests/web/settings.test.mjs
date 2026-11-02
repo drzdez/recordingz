@@ -40,10 +40,13 @@ test("settings: sections, values from the file, only changes are saved, comments
 
   p.$("settingsSave").click();
   // the save answers with the whole settings again (models, devices): on GitHub's runner that took over 4 s
-  // three times (2026-10-06, -08, -09), so this one waits longer
-  await waitFor(() => /nastavení uloženo \(3\)/.test(p.$("status").textContent),
+  // three times (2026-10-06, -08, -09), so this one waits longer. The page says "nastavení uloženo (3)", the
+  // server's event "nastavení uloženo: <keys>" – whichever comes last stays (2026-10-23 the event did)
+  await waitFor(() => /nastavení uloženo/.test(p.$("status").textContent)
+                      && !p.doc.querySelector("#settingsMain .setRow.changed"),
                 () => `the save (status line: "${p.$("status").textContent}")`, 15000);
-  assert.equal(p.doc.querySelectorAll("#settingsMain .setRow.changed").length, 0);
+  assert.match(p.$("status").textContent,
+               /nastavení uloženo( \(3\)|: transcribe\.diarize, transcribe\.glossary, voiceprints\.threshold)/);
   const text = readFileSync(CONFIG, "utf8");
   assert.match(text, /glossary = \["ATLAS", "SLA", "BPMN"\]/);
   assert.match(text, /diarize = false/);
