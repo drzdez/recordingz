@@ -211,6 +211,33 @@ def voiced_names(cfg: Config, people: list) -> list[str]:
     return sorted(out)
 
 
+AUDIO_EXT = {".wav", ".flac", ".opus", ".ogg", ".m4a", ".mp3"}
+VIDEO_EXT = {".mp4", ".mkv", ".webm"}
+
+
+def recorded_facts(rec: Recording) -> dict:
+    """What was recorded, for the page above the processing offer: where from (source, and the call app outside
+    Teams), how long, and how much audio and video lies on disk."""
+    duration = rec.sidecar.get("duration_s")
+    if not duration:  # a recovered recording may lack it
+        try:
+            duration = int((datetime.fromisoformat(rec.sidecar["end"]) -
+                            datetime.fromisoformat(rec.sidecar["start"])).total_seconds())
+        except (KeyError, TypeError, ValueError):
+            duration = None
+    audio = video = 0
+    for f in rec.dir.glob(f"{rec.stem}*"):
+        ext = f.suffix.lower()
+        if f.is_file() and (ext in AUDIO_EXT or ext in VIDEO_EXT):
+            size = f.stat().st_size
+            if ext in AUDIO_EXT:
+                audio += size
+            else:
+                video += size
+    return {"source": rec.source, "call_app": rec.sidecar.get("call_app"), "duration_s": duration,
+            "audio_bytes": audio, "video_bytes": video}
+
+
 def build_review(cfg: Config, rec: Recording) -> dict:
     if not rec.transcript_path.exists():  # the page offers to process it
         return {"stem": rec.stem, "title": rec.title, "start": rec.sidecar.get("start"), "cloud": cloud_ready(cfg),
@@ -219,7 +246,7 @@ def build_review(cfg: Config, rec: Recording) -> dict:
                 "speakers": [], "known_names": [], "people": [], "display_default": cfg.people_display,
                 "language": None, "speaker_sources": [], "has_summary": False,
                 "minutes_auto": cfg.summarize.enabled, "plans": plans(cfg), "choices": choices(cfg),
-                "failure": read_failure(rec), **call_offer(cfg, rec)}
+                "failure": read_failure(rec), "recorded": recorded_facts(rec), **call_offer(cfg, rec)}
     data, segs = load_segments(rec)  # raw provider speakers, without speakers.json applied
     manual = rec.read_json(rec.speakers_path) if rec.speakers_path.exists() else {}
     people = People.load(cfg.out_dir, cfg.people_display)
@@ -366,6 +393,7 @@ FAILURE_SUFFIX = ".failed.json"  # the last failed job of a recording, shown abo
 FAILURE_TEXT_MAX = 600
 _KEY_REFUSED = re.compile(r"\b([A-Z][A-Za-z]+) 401\b|invalid[ _]api[ _]key|authentication_error|unauthorized",
                           re.IGNORECASE)
+_VENDOR_SECRET = {"ElevenLabs": "elevenlabs", "OpenAI": "openai", "Anthropic": "anthropic", "Claude": "anthropic"}
 
 
 def failure_hint(text: str) -> dict:
@@ -374,8 +402,13 @@ def failure_hint(text: str) -> dict:
     if not m:
         return {}
     vendor = m.group(1) or "Služba"
-    return {"key": True, "text": f"{vendor} odmítl klíč API (neplatný nebo zrušený). Zadejte platný klíč v "
-                                 f"Nastavení → Klíče API a spusťte zpracování znovu."}
+    text = (f"{vendor} odmítl klíč API (neplatný nebo zrušený). Zadejte platný klíč v Nastavení → Klíče API a "
+            f"spusťte zpracování znovu.")
+    secret = _VENDOR_SECRET.get(vendor)
+    source = settings.secret_source(secret) if secret else ""
+    if source and source != "vault":  # the refused key came from a variable: say so, the page's key wins over it
+        text += f" Odmítnutý klíč byl z proměnné prostředí {source}; klíč zadaný v Nastavení má přednost."
+    return {"key": True, "text": text}
 
 
 def write_failure(rec: Recording, job: str, text: str) -> None:

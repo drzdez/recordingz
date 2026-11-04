@@ -175,7 +175,8 @@ One file for both apps: `%APPDATA%\recordingz\recordingz.toml`. Every setting ca
 
 Never in the configuration or the repository. The easiest is to enter them under **Nastavení** on the review page
 (`recordingz review` → Nastavení → Klíče API): they are stored encrypted in the Windows Credential Manager for
-your account and apply at once, without a restart. User environment variables work too and win:
+your account and apply at once, without a restart. User environment variables work too, when no key is stored on the
+page (a stored key wins, so a stale variable cannot undo it):
 
 | variable | for |
 |---|---|

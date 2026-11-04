@@ -24,6 +24,7 @@ test("one button; each step on this PC or in the cloud; a cloud step without its
   const go = await waitFor(() => p.doc.querySelector("#main .procPanel button.primary-btn"), "the processing offer");
   const main = p.$("main");
   assert.equal(go.textContent, "Přepsat a zpracovat");
+  assert.equal(p.$("recordedLine").textContent, "Nahráno: importovaný soubor · 30 min 0 s · 1 MB", "what was recorded");
   assert.ok(!main.querySelector("button.cloud-btn"), "no second button");
   assert.doesNotMatch(main.textContent, /není co kontrolovat/);
   assert.ok(radio(main, "procAsr", "local").checked && radio(main, "procMin", "local").checked, "the settings: all local");

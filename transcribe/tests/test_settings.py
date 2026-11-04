@@ -1,5 +1,6 @@
 """Settings page back end: the TOML is edited in place (comments kept), values are checked, keys never leak."""
 import json
+import os
 import tomllib
 
 import pytest
@@ -118,24 +119,49 @@ def test_a_list_can_come_as_lines(cfg_file):
     assert settings.read_values(cfg_file)["summarize.compare"] == ["anthropic:claude-opus-5", "ollama:gemma4:31b"]
 
 
-def test_keys_come_from_the_environment_first_then_the_vault(vault, monkeypatch):
-    assert settings.get_secret("openai") == ""
+def test_the_stored_key_wins_over_the_environment(vault, monkeypatch):
+    """2. 11.: a stale ELEVENLABS_API_KEY another tool had set kept refusing, whatever key was entered on the page."""
+    assert settings.get_secret("openai") == "" and settings.secret_source("openai") == ""
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-from-env")
+    assert settings.get_secret("openai") == "sk-from-env", "a key set with setx works when none is stored"
+    assert settings.secret_source("openai") == "OPENAI_API_KEY"
+    assert {s["name"]: s for s in settings.secret_states()}["openai"]["state"] == "env"
     settings.set_secret("openai", " sk-test-123 ")
     assert vault.store[("recordingz", "openai")] == "sk-test-123"
-    assert settings.get_secret("openai") == "sk-test-123"
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-from-env")
-    assert settings.get_secret("openai") == "sk-from-env", "a key set with setx wins"
+    assert settings.get_secret("openai") == "sk-test-123", "the key entered on the page wins"
+    assert settings.secret_source("openai") == "vault"
     states = {s["name"]: s for s in settings.secret_states()}
-    assert states["openai"]["state"] == "env" and states["openai"]["env"] == "OPENAI_API_KEY"
+    assert states["openai"]["state"] == "vault" and states["openai"]["env"] == "OPENAI_API_KEY", "the variable is named"
     assert states["anthropic"]["state"] == "missing"
     assert "sk-" not in json.dumps(states), "a key value never leaves the vault"
-    monkeypatch.delenv("OPENAI_API_KEY")
     assert settings.delete_secret("openai") is True and settings.delete_secret("openai") is False
+    assert settings.get_secret("openai") == "sk-from-env", "deleting the stored key falls back to the variable"
+    monkeypatch.delenv("OPENAI_API_KEY")
     assert settings.get_secret("openai") == ""
     with pytest.raises(settings.SettingsError):
         settings.set_secret("openai", "two words")
     with pytest.raises(settings.SettingsError):
         settings.set_secret("github", "x")
+
+
+def test_a_refused_key_from_a_variable_is_named_in_the_hint(vault, monkeypatch):
+    from recordingz.web import views
+    monkeypatch.setenv("ELEVENLABS_API_KEY", "el-stale")
+    hint = views.failure_hint('ElevenLabs 401: {"detail": "Invalid API key"}')
+    assert hint["key"] and "z proměnné prostředí ELEVENLABS_API_KEY" in hint["text"]
+    assert "el-stale" not in hint["text"]
+    settings.set_secret("elevenlabs", "el-good")
+    assert "proměnné" not in views.failure_hint("ElevenLabs 401: unauthorized")["text"], "the stored key is used now"
+
+
+def test_hf_token_stored_on_the_page_wins_too(vault, monkeypatch):
+    monkeypatch.setenv("HF_TOKEN", "hf_stale")
+    monkeypatch.setenv("HUGGING_FACE_HUB_TOKEN", "hf_stale")
+    settings.export_hf_token()
+    assert os.environ["HF_TOKEN"] == "hf_stale", "nothing stored: the variable stays"
+    settings.set_secret("huggingface", "hf_good")
+    settings.export_hf_token()
+    assert os.environ["HF_TOKEN"] == "hf_good" and "HUGGING_FACE_HUB_TOKEN" not in os.environ
 
 
 def test_cloud_providers_and_claude_use_the_stored_key(vault):

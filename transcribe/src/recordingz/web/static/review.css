@@ -490,3 +490,7 @@ footer .fMid > #status { flex: 1 1 auto; min-width: 0; margin-right: auto; font-
 kbd { font: 12px ui-monospace, Consolas, monospace; border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
 [hidden] { display: none !important; }
 @media (max-width: 720px) { .card { grid-template-columns: 1fr; } header select { max-width: 100%; } }
+
+/* what was recorded, above the processing offer of a recording without a transcript */
+.recordedLine { text-align: center; margin: 24px 0 -16px; color: var(--muted); }
+.recordedLine b { color: var(--fg); }

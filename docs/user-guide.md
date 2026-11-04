@@ -151,9 +151,9 @@ The default transcription is local WhisperX on the graphics card. Next to it the
 | `elevenlabs` | `scribe_v2` | speakers, word times, language; no glossary and no voice prints |
 
 **The cloud sends the meeting's audio out** (see [privacy.md](privacy.md)). Enter the key under **Nastavení** on the
-review page (it is stored in the Windows Credential Manager), or in the environment variable
-`RECORDINGZ_OPENAI_API_KEY` / `RECORDINGZ_ELEVENLABS_API_KEY` (or the usual `OPENAI_API_KEY` / `ELEVENLABS_API_KEY`), which
-wins. The audio is compressed before it is sent (Opus; OpenAI has a 25 MB limit).
+review page (it is stored in the Windows Credential Manager and wins), or in the environment variable
+`RECORDINGZ_OPENAI_API_KEY` / `RECORDINGZ_ELEVENLABS_API_KEY` (or the usual `OPENAI_API_KEY` / `ELEVENLABS_API_KEY`), used
+when no key is stored. The audio is compressed before it is sent (Opus; OpenAI has a 25 MB limit).
 
 To try it without changing the settings: `recordingz compare-transcribe <recording> --provider openai` writes
 `<stem>.openai.txt` next to the main transcript (which stays as it is); on the page it is under the Přepis tab, in the
@@ -369,7 +369,9 @@ folder name). The organiser and the planned time from the calendar get into the 
 one only by time, the panel lists the meetings that ran when the call started as buttons ("⚠ v tu dobu bylo v kalendáři
 víc schůzek – kterou to byla?"), the one with the same name first; one click (confirmed by a second) links it.
 
-When the selected recording has no transcript yet, the page offers its processing: a choice per step and the button
+When the selected recording has no transcript yet, the page says what was recorded (**Nahráno:** Teams, the other call
+app, on site, playback or an imported file; the length; the size of the audio and the screen video on disk) and offers
+its processing: a choice per step and the button
 "Přepsat a zpracovat" (transcript, export, minutes; see *Processing a recording* below).
 
 At the bottom is the server's latest event (what happened and when); **Historie** opens the whole list since the server
@@ -583,7 +585,8 @@ opened, or with "Načíst aktuální modely pro výběr".
 
 At the top of Nastavení are the **API keys** (Claude, OpenAI, ElevenLabs). An entered key is stored encrypted in the
 Windows Credential Manager (only for your account, service `recordingz`) and applies at once. It cannot be shown again,
-only replaced or deleted. A key in an environment variable wins, so keys set with `setx` keep working. When you choose a
+only replaced or deleted. It wins over a key in an environment variable (keys set with `setx` still work when none is
+stored); when a service refuses a key that came from a variable, the failure bar names the variable. When you choose a
 cloud service without a key, the page says so.
 
 Underneath is the file `%APPDATA%\recordingz\recordingz.toml`. `recordingz config` shows the current values.

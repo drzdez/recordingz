@@ -763,9 +763,26 @@ def test_a_failed_job_stays_with_its_recording_until_a_run_succeeds(tmp_path, mo
     assert views.build_review(cfg, rec)["failure"] is None, "a run that succeeds clears it"
 
 
-def test_failure_hint_and_clear_only_the_same_job(tmp_path):
+def test_recorded_facts_source_length_and_size(tmp_path):
+    from recordingz.web import views
+    sc = _make_recording(tmp_path, source="live", call_app="Zoom")
+    rec = Recording.load(sc)
+    (rec.dir / f"{rec.stem}_sys.wav").write_bytes(b"x" * 1000)
+    (rec.dir / f"{rec.stem}_screen1.mp4").write_bytes(b"x" * 500)
+    (rec.dir / "notes.txt").write_text("not a recording file", encoding="utf-8")
+    facts = views.recorded_facts(rec)
+    assert facts == {"source": "live", "call_app": "Zoom", "duration_s": 1800, "audio_bytes": 1004, "video_bytes": 500}
+    del rec.sidecar["duration_s"]  # a recovered recording: the length from start and end
+    assert views.recorded_facts(rec)["duration_s"] == 1800
+    assert views.build_review(Config(out_dir=tmp_path), rec)["recorded"]["call_app"] == "Zoom"
+
+
+def test_failure_hint_and_clear_only_the_same_job(tmp_path, monkeypatch):
+    from recordingz import settings
     from recordingz.recording import is_sidecar
     from recordingz.web import views
+    from test_settings import FakeVault
+    monkeypatch.setattr(settings, "_keyring", lambda: FakeVault())  # never the real Credential Manager
     rec = Recording.load(_make_recording(tmp_path))
     assert views.failure_hint("OpenAI 401: unauthorized")["text"].startswith("OpenAI odmítl klíč API")
     assert views.failure_hint("disk full") == {}

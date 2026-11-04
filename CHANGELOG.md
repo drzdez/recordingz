@@ -3,6 +3,14 @@
 Notes for each release, newest first, written by hand for the people using it. The heading format is fixed
 (`## <version> – <date>`); a test keeps an entry for the current version.
 
+## 2.0.11 – 2026-11-04
+
+- **The key entered in Nastavení → Klíče API wins** over a key in an environment variable (before, a stale
+  `ELEVENLABS_API_KEY` kept being refused whatever key was entered on the page). A variable still works when no key
+  is stored; when a service refuses a key that came from a variable, the failure bar names the variable.
+- A recording without a transcript says what was recorded above the processing offer: **Nahráno:** Teams (or the
+  other call app, on site, playback, an imported file), the length and the size of the audio and video on disk.
+
 ## 2.0.10 – 2026-11-02
 
 - **Zkontrolovat aktualizace** in the window now gets an answer: the tray app of 2.0.7 did not notice the window's

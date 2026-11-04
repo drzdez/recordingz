@@ -12,7 +12,7 @@
  * @typedef {{source:string,subject:string,organizer:string,start:string,end:string,match:string,status:string,candidates:Candidate[]}} Calendar
  * @typedef {{title:string,title_source:string,calendar:Calendar|null,participants:{name:string,source:string}[],outlook_enabled:boolean,start:string}} Meeting
  * @typedef {{person:string,labels:string[],name:string}} SamePerson
- * @typedef {{stem:string,title:string,start:string,duration_s:number,source:string,transcribed:boolean,language:string|null,speaker_sources:string[],has_summary:boolean,has_mix:boolean,speakers:Speaker[],known_names:string[],people:Person[],display_default:string,meeting?:Meeting,same_person?:SamePerson[],can_unmerge?:boolean,edited?:string|null,export_folder?:string,minutes_auto?:boolean,dir?:string,md_viewer?:string,minutes_problem?:string,minutes_pull?:string,timings?:any[],voices_missing?:boolean,voices_mixed?:string[],failure?:{job:string,text:string,at:string,hint?:{key?:boolean,text?:string}}|null,cloud?:{ok:boolean,missing:string,provider:string,model:string},transcribed_with?:{provider:string,model:string,languages:string[],unaligned?:boolean}}} Review
+ * @typedef {{stem:string,title:string,start:string,duration_s:number,source:string,transcribed:boolean,language:string|null,speaker_sources:string[],has_summary:boolean,has_mix:boolean,speakers:Speaker[],known_names:string[],people:Person[],display_default:string,meeting?:Meeting,same_person?:SamePerson[],can_unmerge?:boolean,edited?:string|null,export_folder?:string,minutes_auto?:boolean,dir?:string,md_viewer?:string,minutes_problem?:string,minutes_pull?:string,timings?:any[],voices_missing?:boolean,voices_mixed?:string[],recorded?:{source:string,call_app?:string|null,duration_s?:number|null,audio_bytes:number,video_bytes:number},failure?:{job:string,text:string,at:string,hint?:{key?:boolean,text?:string}}|null,cloud?:{ok:boolean,missing:string,provider:string,model:string},transcribed_with?:{provider:string,model:string,languages:string[],unaligned?:boolean}}} Review
  * @typedef {{stem:string,title:string,start:string,transcribed:boolean,unresolved:number|null,summary?:boolean,unaligned?:boolean,edited?:string|null}} RecordingRow
  */
 
@@ -787,6 +787,8 @@ function processEstimate(/** @type {any} */ r) {
 
 function renderNotTranscribed(r) {
   main.innerHTML = "";
+  const facts = recordedLine(r);
+  if (facts) main.appendChild(facts);
   const box = document.createElement("div"); box.className = "empty";
   box.dataset.queued = r.stem;
   const est = processEstimate(r);
@@ -799,6 +801,33 @@ function renderNotTranscribed(r) {
     return;
   }
   renderNotTranscribedOffer(r, box, est);
+}
+
+const RECORDED_FROM = { onsite: "na místě (mikrofon počítače)", playback: "přehrávání (zvuk počítače)",
+                        manual: "ručně spuštěná nahrávka", import: "importovaný soubor" };
+/** e.g. 24 min 49 s, 4 h 0 min */
+function fmtLength(/** @type {number} */ s) {
+  s = Math.round(s);
+  if (s >= 3600) return `${Math.floor(s / 3600)} h ${Math.floor((s % 3600) / 60)} min`;
+  return s >= 60 ? `${Math.floor(s / 60)} min ${s % 60} s` : `${s} s`;
+}
+function fmtBytes(/** @type {number} */ b) {
+  if (b >= 1e9) return `${(b / 1e9).toFixed(1).replace(".", ",")} GB`;
+  return `${Math.max(1, Math.round(b / 1e6))} MB`;
+}
+/** "Nahráno: Teams · 24 min 49 s · 507 MB (zvuk 476 MB, video 31 MB)" above the processing offer */
+function recordedLine(/** @type {Review} */ r) {
+  const f = r.recorded;
+  if (!f) return null;
+  const from = f.source === "live" ? (f.call_app || "Teams") : (RECORDED_FROM[f.source] || f.source);
+  const parts = [from];
+  if (f.duration_s) parts.push(fmtLength(f.duration_s));
+  const total = f.audio_bytes + f.video_bytes;
+  if (total) parts.push(fmtBytes(total) + (f.video_bytes ? ` (zvuk ${fmtBytes(f.audio_bytes)}, video ${fmtBytes(f.video_bytes)})` : ""));
+  else parts.push("bez zvuku na disku");
+  const p = document.createElement("p"); p.className = "recordedLine"; p.id = "recordedLine";
+  p.innerHTML = `<b>Nahráno:</b> ${escapeHtml(parts.join(" · "))}`;
+  return p;
 }
 
 /** "Zpracovat jako další", "Zpracovat hned", "Zrušit zpracování" for a queued or running job */
@@ -3444,7 +3473,8 @@ async function saveSettings() {
 function keysCard(d) {
   const card = document.createElement("section"); card.className = "card setSec"; card.dataset.section = "keys";
   card.innerHTML = '<h2>Klíče API</h2><p class="note">Klíč se uloží šifrovaně do Správce přihlašovacích údajů Windows ' +
-    '(jen pro váš účet) a hned platí. Zobrazit ho už nejde, jen přepsat nebo smazat. Klíč v proměnné prostředí má přednost.</p>';
+    '(jen pro váš účet) a hned platí. Zobrazit ho už nejde, jen přepsat nebo smazat. Má přednost před klíčem v proměnné ' +
+    'prostředí; ta platí, jen když tady klíč uložený není.</p>';
   if (!d.vault) card.innerHTML += '<p class="setWarn">Správce přihlašovacích údajů není dostupný – klíče jde nastavit jen proměnnými prostředí.</p>';
   for (const s of d.secrets) {
     const row = document.createElement("div"); row.className = "keyRow"; row.dataset.secret = s.name;
@@ -3452,6 +3482,7 @@ function keysCard(d) {
     const st = document.createElement("span"); st.className = "keyState " + s.state;
     st.textContent = KEY_STATE[s.state];
     st.title = (s.state === "env" ? `klíč z proměnné ${s.env}; ` : "") +
+               (s.state === "vault" && s.env ? `proměnná ${s.env} se nepoužívá (přednost má uložený klíč); ` : "") +
                (s.state === "missing" ? `potřeba pro: ${s.used_for}` : `používá se pro: ${s.used_for}`);
     const inp = document.createElement("input"); inp.type = "password"; inp.autocomplete = "off"; inp.placeholder = "nový klíč";
     inp.disabled = !d.vault; inp.dataset.secretInput = s.name;

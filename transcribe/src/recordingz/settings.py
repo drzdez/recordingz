@@ -2,9 +2,10 @@
 back without losing comments, and the API keys, which never go into the file.
 
 The TOML is shared with the capture app: its [capture] keys are listed here too, and the capture app re-reads the
-file when it changes. Keys are looked up in the environment first (RECORDINGZ_<VENDOR>_API_KEY, then the vendor's own
-name), then in the Windows Credential Manager (service "recordingz", via `keyring`), where the settings page stores
-them - encrypted for the Windows user, never shown again, usable at once without a restart.
+file when it changes. Keys are looked up in the Windows Credential Manager first (service "recordingz", via `keyring`), where
+the settings page stores them - encrypted for the Windows user, never shown again, usable at once without a restart -
+then in the environment (RECORDINGZ_<VENDOR>_API_KEY, then the vendor's own name). The key entered on the page wins:
+a stale variable another tool set must not undo it (and a running app would keep the variable until it restarts).
 """
 
 from __future__ import annotations
@@ -242,11 +243,12 @@ def hf_login_token() -> str:
 
 def export_hf_token() -> None:
     """The Hugging Face token stored on the settings page, for the libraries that read HF_TOKEN (pyannote,
-    huggingface_hub). A token from `hf auth login` (its own file) keeps working without it."""
-    if not os.environ.get("HF_TOKEN") and not os.environ.get("HUGGING_FACE_HUB_TOKEN"):
-        token = _vault_get("huggingface")
-        if token:
-            os.environ["HF_TOKEN"] = token
+    huggingface_hub); it wins over a variable, like the other keys. A token from `hf auth login` (its own file) keeps
+    working without either."""
+    token = _vault_get("huggingface")
+    if token:
+        os.environ["HF_TOKEN"] = token
+        os.environ.pop("HUGGING_FACE_HUB_TOKEN", None)
 
 
 class SettingsError(ValueError):
@@ -551,21 +553,34 @@ def _vault_get(name: str) -> str:
         return ""
 
 
+def _env_var(name: str) -> str:
+    """The first environment variable that holds this key, or ""."""
+    return next((var for var in SECRETS[name].env if os.environ.get(var, "").strip()), "")
+
+
 def get_secret(name: str) -> str:
-    """The API key: environment first (so keys set with setx keep working), then the Credential Manager.
-    "" when there is none. Never logged, never sent to the page."""
-    for var in SECRETS[name].env:
-        v = os.environ.get(var, "").strip()
-        if v:
-            return v
-    return _vault_get(name)
+    """The API key: the one stored on the settings page first, then the environment (keys set with setx keep
+    working when none is stored). "" when there is none. Never logged, never sent to the page."""
+    stored = _vault_get(name)
+    if stored:
+        return stored
+    var = _env_var(name)
+    return os.environ[var].strip() if var else ""
+
+
+def secret_source(name: str) -> str:
+    """Where get_secret takes the key from: "vault", the variable's name, or "" when there is none."""
+    if _vault_get(name):
+        return "vault"
+    return _env_var(name)
 
 
 def secret_states() -> list[dict]:
+    """Each key's state for the page; `env` names a variable that also holds it (used only without a stored key)."""
     out = []
     for s in SECRETS.values():
-        env = next((var for var in s.env if os.environ.get(var, "").strip()), "")
-        state = "env" if env else ("vault" if _vault_get(s.name) else "missing")
+        env = _env_var(s.name)
+        state = "vault" if _vault_get(s.name) else ("env" if env else "missing")
         out.append({"name": s.name, "label": s.label, "used_for": s.used_for, "state": state, "env": env,
                     "env_names": list(s.env)})
     return out
