@@ -394,6 +394,45 @@ def test_with_a_page_open_the_recording_asks_first(tmp_path, monkeypatch):
     state.unsubscribe(q)
 
 
+def test_a_cloud_processing_runs_during_a_recording_a_local_one_waits(tmp_path, monkeypatch):
+    """2026-11-09: a processing with the transcript and the minutes in the cloud waited for a recording's end. Nothing
+    of it needs the GPU, so it runs during the recording, the window video read on the CPU (--no-gpu); a processing
+    with any local step (WhisperX, Ollama minutes or comparison, local voices) still waits."""
+    import time as _time
+    from recordingz import settings
+    from recordingz.config import SummarizeSettings
+    from recordingz.web import jobs
+    monkeypatch.setattr(settings, "get_secret", lambda name: "k")
+    runs = []
+    monkeypatch.setattr(jobs, "run_cli", lambda argv, on_proc, on_line: runs.append(argv))
+    cfg = Config(out_dir=tmp_path, summarize=SummarizeSettings(compare=("ollama:qwen3:8b",)))
+    assert jobs._gpu_free(cfg, False, "cloud", "cloud", None, False), "comparison unticked on the page"
+    assert not jobs._gpu_free(cfg, False, "cloud", "cloud", None, None), "compare_auto with a local comparison model"
+    assert jobs._gpu_free(cfg, False, "cloud", "", False, None), "no minutes"
+    assert not jobs._gpu_free(cfg, False, "cloud", "local", None, None), "Ollama minutes"
+    assert not jobs._gpu_free(cfg, False, "local", "cloud", None, None), "WhisperX"
+    assert not jobs._gpu_free(cfg, False, "cloud", "cloud", None, True), "a local comparison minutes"
+    assert jobs._gpu_free(cfg, True, "", "", None, True), "the fast track never compares"
+    rec = Recording.load(_make_recording(tmp_path))
+    state = jobs.ReviewState(cfg)
+    state.set_capture({"running": True, "recording": True, "title": "Porada"})
+    state.run_process(rec, transcribe="cloud", minutes_with="cloud", compare=False)
+    for _ in range(200):
+        if runs:
+            break
+        _time.sleep(0.02)
+    assert len(runs) == 1 and runs[0][-1] == "--no-gpu", "it ran during the recording, without the GPU"
+    assert not any("čeká na konec nahrávání" in e["text"] for e in state.events)
+    for _ in range(200):
+        if not state.busy:
+            break
+        _time.sleep(0.02)
+    state.run_process(rec, transcribe="cloud", minutes_with="local", compare=False)
+    _time.sleep(0.3)
+    assert len(runs) == 1 and [q["stem"] for q in state.jobs_state()["queue"]] == [rec.stem], "local minutes wait"
+    assert any("čeká na konec nahrávání" in e["text"] for e in state.events)
+
+
 def test_cloud_only_run_uses_cloud_services_and_needs_their_keys(tmp_path, monkeypatch):
     from recordingz import fasttrack, settings
     from recordingz.config import SummarizeSettings
@@ -421,7 +460,7 @@ def test_cloud_only_run_uses_cloud_services_and_needs_their_keys(tmp_path, monke
         if calls:
             break
         _time.sleep(0.02)
-    assert calls[0][-4:] == [rec.stem, "--force", "--cloud", "--minutes-when-named"], "the fast track waits for names too"
+    assert calls[0][-5:] == [rec.stem, "--force", "--cloud", "--minutes-when-named", "--no-gpu"],         "the fast track waits for names too, and uses no GPU"
     calls.clear()
     state.run_process(rec, cloud=True, minutes_anyway=True, voices=True)
     for _ in range(100):

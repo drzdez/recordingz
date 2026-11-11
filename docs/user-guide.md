@@ -384,8 +384,9 @@ When a recording starts while a transcription or minutes are being generated, th
 GPU and CPU are busy). The setting "Když začne nahrávání a běží zpracování" decides: ask (a yellow-black warning tape
 in the middle of the window with **Přerušit náročné**, **Přerušit vše** and **Nechat běžet**; the desktop window
 also flashes in the taskbar; the heavy work stops after 10 s without an answer, or at once when no page is open), stop
-at once, or let it run. Only GPU work is stopped and held: minutes written in the cloud (Claude, OpenAI) go on and may
-even start during a recording, unless **Přerušit vše** was chosen. A stopped job goes back to the front of the queue
+at once, or let it run. Only GPU work is stopped and held: minutes written in the cloud (Claude, OpenAI) and a whole
+processing with nothing on this PC (the transcript in the cloud, the minutes in the cloud or none, no local voices, no
+local comparison minutes) go on and may even start during a recording, unless **Přerušit vše** was chosen. A stopped job goes back to the front of the queue
 and finishes by itself after the recording; a heavy job asked for during a recording waits for its end too (unless the
 setting is to let it run). The same tape says when the page has
 lost its server (open the review page again from the tray icon).

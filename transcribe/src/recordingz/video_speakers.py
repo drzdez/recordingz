@@ -85,7 +85,7 @@ def _tile_label_box(tile: tuple[int, int, int, int]) -> tuple[int, int, int, int
 
 
 def analyze_screen(video: Path, *, fps: float = 2.0, names: list[str] | None = None,
-                   min_samples: int = 4, width: int = 1600, height: int = 900) -> VideoTimeline | None:
+                   min_samples: int = 4, width: int = 1600, height: int = 900, gpu: bool = True) -> VideoTimeline | None:
     """Like analyze_video, for a Teams window captured live (`<stem>_screen<N>.mp4`)."""
     step = 1.0 / fps
     hits: dict[tuple[int, int], list[tuple[float, tuple]]] = defaultdict(list)
@@ -101,7 +101,7 @@ def analyze_screen(video: Path, *, fps: float = 2.0, names: list[str] | None = N
         return None
 
     import easyocr
-    reader = easyocr.Reader(["cs", "en"], gpu=True, verbose=False)
+    reader = easyocr.Reader(["cs", "en"], gpu=gpu, verbose=False)  # gpu=False: processing during a recording
     known = names or []
     clusters, by_name = [], defaultdict(set)
     for key, lst in sorted(hits.items(), key=lambda kv: -len(kv[1])):
@@ -210,7 +210,7 @@ def _normalize(txt: str, known: list[str]) -> str:
 
 
 def analyze_video(video: Path, *, fps: float = 2.0, names: list[str] | None = None,
-                  min_samples: int = 4, width: int = 1920, height: int = 1080) -> VideoTimeline | None:
+                  min_samples: int = 4, width: int = 1920, height: int = 1080, gpu: bool = True) -> VideoTimeline | None:
     step = 1.0 / fps
     hits: dict[tuple[int, int], list[tuple[float, tuple]]] = defaultdict(list)
     n = 0
@@ -230,7 +230,7 @@ def analyze_video(video: Path, *, fps: float = 2.0, names: list[str] | None = No
         return None
 
     import easyocr
-    reader = easyocr.Reader(["cs", "en"], gpu=True, verbose=False)
+    reader = easyocr.Reader(["cs", "en"], gpu=gpu, verbose=False)  # gpu=False: processing during a recording
     known = names or []
     clusters, by_name = [], defaultdict(set)
     for key, lst in sorted(hits.items(), key=lambda kv: -len(kv[1])):

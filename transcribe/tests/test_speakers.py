@@ -240,7 +240,7 @@ def test_screen_analysis_writes_merged_timeline(tmp_path, monkeypatch):
     for n in ("_screen1.mp4", "_screen2.mp4"):
         rec.file(n).write_bytes(b"x")
     seen = []
-    def fake_analyze(path, *, fps, names, width, height):
+    def fake_analyze(path, *, fps, names, width, height, gpu=True):
         seen.append((path.name, names, width))
         if path.name.endswith("_screen1.mp4"):
             return VideoTimeline(fps=fps, speakers={"Petr Svoboda": [[0, 10]]}, clusters=[])

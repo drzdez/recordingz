@@ -100,7 +100,8 @@ def do_video_screens(cfg: Config, rec: Recording) -> VideoTimeline | None:
             log.info("%s: %s is the Teams main window (%s), skipped", rec.stem, sc["file"], (sc.get("titles") or ["?"])[0])
             continue
         log.info("%s: analysing %s (%s)", rec.stem, sc["file"], "; ".join(sc.get("titles", [])[:2]))
-        tl = analyze_screen(path, fps=cfg.video.fps, names=names, width=sc.get("width", 1600), height=sc.get("height", 900))
+        tl = analyze_screen(path, fps=cfg.video.fps, names=names, width=sc.get("width", 1600), height=sc.get("height", 900),
+                            gpu=cfg.transcribe.device == "cuda")
         if tl is not None:
             kept = keep_video_names(tl.speakers, candidates)
             dropped = sorted(set(tl.speakers) - set(kept))
@@ -133,7 +134,7 @@ def do_video(cfg: Config, rec: Recording) -> VideoTimeline | None:
         return None
     log.info("%s: analysing video for active speakers", rec.stem)
     tl = analyze_video(src, fps=cfg.video.fps, names=rec.participants or None,
-                       width=info.width or 1920, height=info.height or 1080)
+                       width=info.width or 1920, height=info.height or 1080, gpu=cfg.transcribe.device == "cuda")
     if tl is None:
         return None
     rec.write_json(rec.speakers_video_path, tl.to_json())

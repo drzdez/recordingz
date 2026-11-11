@@ -105,6 +105,26 @@ def capture_status(path: Path = CAPTURE_STATUS) -> dict:
     return {k: d.get(k) for k in ("running", "recording", "title", "stem", "source", "started")}
 
 
+def _gpu_free(cfg, cloud: bool, transcribe: str, minutes_with: str, minutes, compare) -> bool:
+    """Whether a processing with these page choices runs nothing on this PC's GPU – the configuration the job's child
+    process builds (cli run-job): the transcript from a cloud service and the minutes (with any comparison) from the
+    cloud or none at all. The window video is then read on the CPU (--no-gpu)."""
+    from dataclasses import replace
+    from ..fasttrack import choose, cloud_only
+    c = cloud_only(cfg) if cloud else cfg
+    if transcribe or minutes_with:
+        c = choose(c, transcribe, minutes_with)
+    if c.transcribe.provider == "whisperx":
+        return False
+    s = c.summarize if minutes is None else replace(c.summarize, enabled=minutes)
+    if not s.enabled:
+        return True
+    if s.provider == "ollama":
+        return False
+    with_compare = compare if compare is not None else s.compare_auto
+    return not (with_compare and not cloud and any(str(m).startswith("ollama:") for m in s.compare))
+
+
 def _after(argv: list, flag: str) -> str:
     """The value after a flag in a job's command line, "" without it."""
     return str(argv[argv.index(flag) + 1]) if flag in argv and argv.index(flag) + 1 < len(argv) else ""
@@ -594,6 +614,9 @@ class ReviewState:
             if where and offer[step][where]["missing"]:
                 raise ValueError(offer[step][where]["missing"])
         voices = voices and (cloud or transcribe == "cloud")
+        # nothing on the GPU (cloud transcript, cloud or no minutes, no local voices): it may run during a recording,
+        # the window video read on the CPU (2026-11-09: a cloud processing waited for the recording's end)
+        light = not voices and _gpu_free(self.cfg, cloud, transcribe, minutes_with, minutes, compare)
         what = (("nový přepis od nuly" if force else "zpracování")
                 + ((" (cloud + hlasy lokálně)" if voices else " (cloud)") if cloud else ""))
         # the minutes wait for named speakers unless asked otherwise (local and fast track alike); the fast track
@@ -606,8 +629,9 @@ class ReviewState:
                             + ([] if compare is None or cloud else ["--compare" if compare else "--no-compare"])
                             + (["--only-with", only_with.strip()] if only_with.strip() else [])
                             + (["--transcribe-with", transcribe] if transcribe else [])
-                            + (["--minutes-with", minutes_with] if minutes_with else []),
-                            "zpracováno", rec.stem, start=f"{rec.stem}: {what} spuštěno")
+                            + (["--minutes-with", minutes_with] if minutes_with else [])
+                            + (["--no-gpu"] if light else []),
+                            "zpracováno", rec.stem, start=f"{rec.stem}: {what} spuštěno", light=light)
 
     def job_of(self, stem: str) -> str:
         """"" when no job of this recording runs or waits, else what it does (a meeting with a job is not deleted)."""

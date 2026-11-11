@@ -448,6 +448,8 @@ def run_job(ctx: typer.Context, kind: str = typer.Argument(..., help="process | 
             compare: Optional[bool] = typer.Option(None, "--compare/--no-compare",
                                                    help="process: also the comparison minutes of [summarize] compare "
                                                         "([summarize] compare_auto when not given)"),
+            no_gpu: bool = typer.Option(False, help="process: nothing on the GPU (the window video read on the CPU) – "
+                                                   "a cloud processing that runs during a recording"),
             provider: str = typer.Option(""), model: str = typer.Option("")):
     """One background job of the review page, in a process of its own, so the page can stop it (a recording
     started: the GPU must not break the recorded sound)."""
@@ -479,6 +481,9 @@ def run_job(ctx: typer.Context, kind: str = typer.Argument(..., help="process | 
         from dataclasses import replace
         cfg = replace(cfg, summarize=replace(cfg.summarize, compare_auto=True) if compare
                       else replace(cfg.summarize, compare=()))
+    if no_gpu:  # the recording's sound must not break: the one local model of a cloud run (the video OCR) on the CPU
+        from dataclasses import replace
+        cfg = replace(cfg, transcribe=replace(cfg.transcribe, device="cpu"))
     rec = resolve_target(cfg, target, allow_import=False)
     from . import timings
     timings.start_run(kind + (" --force" if force else "") + (" --cloud" if cloud else "")
