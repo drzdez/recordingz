@@ -66,6 +66,11 @@ to be asked sets "Na začátku hovoru v Teams" in the settings (`[capture] promp
 kept without an answer within 45 s, or `"skip"`: discarded without an answer). An optional scheduled task starts the
 capture app again should it crash ([install.md](install.md#3-recording-the-capture-app)).
 
+Should Teams be in a call for 30 s and nothing record it (Windows did not show the microphone in use), the tray
+icon beeps and says "V Teams probíhá hovor …, ale nenahrává se"; a click on that message starts the recording, which
+then ends with the call. While you present, only the tray icon's tooltip says so. When the recorded call ends and
+Teams joins the next meeting straight away, the recording ends and a new one starts for that meeting.
+
 A double click on the tray icon (or a click on its "Saved …" balloon) opens the review page, on that recording.
 
 `recordingz process --latest` imports what is in the `_inbox` and processes it, then the newest recording:

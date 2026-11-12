@@ -23,6 +23,7 @@ internal static class AppLogic
     public const int NoAudioWarnS = 10;         // no byte from any device this long after the start = warn once
     public const int OfferWindowS = 240;        // a calendar meeting is offered from its start until this long after it
     public const int OfferCheckS = 30;          // Outlook is asked at most this often (COM calls are slow)
+    public const int UnrecordedWarnS = 30;      // Teams reports a call this long and nothing records it = warn
 
     /// <summary>Contract `source` of a recording.</summary>
     public static string SourceOf(bool onsite, bool playback, bool manual) =>
@@ -116,6 +117,27 @@ internal static class AppLogic
         }
         missingSince ??= now;
         return now - missingSince.Value >= CallEndGraceS;
+    }
+
+    /// <summary>Teams' log says the recorded call is over and another one is active: the user went from one meeting
+    /// straight to the next and Teams kept the microphone (2026-10-23, 2026-11-10: one recording over three
+    /// meetings). Null recorded = the recorded call was never seen in the log, nothing to compare.</summary>
+    public static bool NextTeamsCall(string? recorded, IReadOnlyList<string> active) =>
+        recorded is not null && active.Count > 0 && !active.Contains(recorded);
+
+    /// <summary>A Teams call nobody records: Teams' log reports it, no recording runs or starts, it was not
+    /// discarded on purpose, and it was not warned about yet. True once it lasted UnrecordedWarnS; `since` keeps
+    /// when it was first seen (null again when there is nothing to warn about).</summary>
+    public static bool UnrecordedCall(string? call, bool recording, bool declined, string? warned, ref double? since,
+                                      double now)
+    {
+        if (call is null || recording || declined || call == warned)
+        {
+            since = null;
+            return false;
+        }
+        since ??= now;
+        return now - since.Value >= UnrecordedWarnS;
     }
 
     /// <summary>Playback ends after SilenceStopS of silence on the system track, once the player had time to start.</summary>
@@ -219,6 +241,8 @@ public sealed class MonitorLoop : IDisposable
     private string? _continues;           // stem of the on-site recording this live one took over from
     private CallApp? _callApp;            // null = Teams (or no call app: manual, on-site, playback)
     private double? _callMissingSince;
+    private bool _byLog;                  // started from the "call not recorded" warning: Teams' log says how long it lasts
+    private string? _teamsCallId;         // the call Teams' log reported active during this recording
     private bool _starting;               // a recording is being started outside the lock (devices, files, ffmpeg)
     private string? _stopWhileStarting;   // a stop / quit came during that start: the new recording is not kept
 
@@ -230,6 +254,9 @@ public sealed class MonitorLoop : IDisposable
     private bool _hiddenWarned;
     private readonly HashSet<string> _offered = [];  // calendar meetings already offered, so they are offered once
     private double _offerCheckedAt;
+    private readonly TeamsCallLog _teamsLog = new(TeamsCallLog.DefaultDir);
+    private double? _unrecordedSince;     // Teams' log reports a call, and nothing records it
+    private string? _unrecordedWarned;    // the call that was warned about (once per call)
 
     /// <summary>Raised whenever the tray should redraw (icon, tooltip). May come from any thread.</summary>
     public event Action? Changed;
@@ -324,24 +351,92 @@ public sealed class MonitorLoop : IDisposable
     /// <summary>One pass of App.loop.</summary>
     internal void Tick()
     {
-        bool inCall = MicUsers.TeamsInUse();
+        PollTeamsLog();
+        var mic = MicUsers.Now();
+        bool inCall = mic.Teams;
         CallApp? app;
         Recorder? rec;
+        bool byLog;
         lock (_lock)
         {
             if (_starting)
                 return;  // a tray action is starting a recording: the next tick sees it
             rec = _rec;
             app = rec is not null ? _callApp : null;
+            byLog = rec is not null && _byLog;
         }
         if (app is not null)  // recording a call in another app: it lasts as long as that app holds the microphone
-            inCall = MicUsers.Current().Contains(app.Id);
+            inCall = mic.Users.Contains(app.Id);
+        else if (byLog)  // the microphone did not show the call: Teams' own log says when it ends
+            inCall |= _teamsLog.Latest is not null;
 
         if (rec is not null)
             TickRecording(rec, inCall);
         else
-            TickIdle(inCall);
+        {
+            TickIdle(inCall, mic.Users);
+            WatchUnrecordedCall(inCall);
+        }
     }
+
+    /// <summary>What Teams' log says since the last tick; nothing goes on while Teams does not run.</summary>
+    private void PollTeamsLog()
+    {
+        if (!TeamsRunning())
+        {
+            _teamsLog.Reset();
+            return;
+        }
+        _teamsLog.Poll();
+    }
+
+    private static bool TeamsRunning()
+    {
+        foreach (var name in new[] { "ms-teams", "teams" })
+        {
+            var ps = System.Diagnostics.Process.GetProcessesByName(name);
+            bool any = ps.Length > 0;
+            foreach (var p in ps) p.Dispose();
+            if (any) return true;
+        }
+        return false;
+    }
+
+    /// <summary>Teams' log reports a call for UnrecordedWarnS and nothing records it (the microphone did not show
+    /// it): say so once per call - a balloon whose click starts the recording, or only a mark while the user
+    /// presents. 2026-11-11: three meetings went unrecorded and nothing said so.</summary>
+    private void WatchUnrecordedCall(bool inCall)
+    {
+        var call = _teamsLog.Latest;
+        if (call is null || Recording || inCall)
+            _notifier.Mark("unrecorded", null);
+        // the microphone shows Teams (join screen, or the call starts this tick): the detection works, nothing to warn about
+        if (!AppLogic.UnrecordedCall(call, Recording || inCall, _declined, _unrecordedWarned, ref _unrecordedSince, _clock.Seconds))
+            return;
+        _unrecordedWarned = call;
+        var titles = TeamsTitles();
+        var title = CallDetector.GuessMeetingTitle(titles) ?? "teams-call";
+        Log.Warn($"Teams reports a call in its log ('{title}'), but no microphone use shows it: not recording");
+        _notifier.Mark("unrecorded", "hovor v Teams se nenahrává");
+        if (AppLogic.Discreet(CallDetector.Presenting(titles), Presence.AcceptsNotifications()))
+            return;
+        _notifier.Beep(error: true);
+        _notifier.NotifyAction($"V Teams probíhá hovor ({title}), ale nenahrává se. Kliknutím sem spustíte nahrávání.",
+                               () => StartFromTeamsLog(title));
+    }
+
+    /// <summary>The click on the "not recorded" warning: record the Teams call as a live one that ends when Teams'
+    /// log says so (or the microphone shows it ended, whichever comes later).</summary>
+    public void StartFromTeamsLog(string title) => Task.Run(() => Guard("start from the Teams log", () =>
+    {
+        var cal = Outlook.Meeting(_cfg.UseOutlook, null, title);
+        if (!string.IsNullOrEmpty(cal?.Subject)) title = cal!.Subject;
+        if (StartRecording(title, byLog: true) is not null)
+        {
+            _notifier.Mark("unrecorded", null);
+            _notifier.Notify($"Nahrávám: {title}. Skončí s hovorem; zastavit lze i z menu ikony v liště.");
+        }
+    }));
 
     private void TickRecording(Recorder rec, bool inCall)
     {
@@ -385,10 +480,19 @@ public sealed class MonitorLoop : IDisposable
         }
         else if (!_manual)
         {
+            if (_callApp is null)
+                _teamsCallId ??= _teamsLog.Latest;
             if (_callApp is null && seenBefore.Count > 1 && CallDetector.NextMeetingJoin(teamsTitles, seenBefore) is { } next)
             {
                 Log.Info($"Teams joins the next meeting '{next}': the call before it is over");
                 _nextMeeting = next;
+                Stop("call ended");
+            }
+            else if (_callApp is null && AppLogic.NextTeamsCall(_teamsCallId, _teamsLog.ActiveCalls))
+            {
+                // a meeting window that was not there before names the new call
+                _nextMeeting = CallDetector.GuessTitles(teamsTitles).FirstOrDefault(t => !seenBefore.Contains(t));
+                Log.Info($"Teams' log: the recorded call ended and another one is active ('{_nextMeeting ?? "?"}'): the call before it is over");
                 Stop("call ended");
             }
             else if (AppLogic.CallEnded(inCall, ref _callMissingSince, _clock.Seconds))
@@ -433,7 +537,7 @@ public sealed class MonitorLoop : IDisposable
             _notifier.Notify(text);
     }
 
-    private void TickIdle(bool inCall)
+    private void TickIdle(bool inCall, HashSet<string> micUsers)
     {
         var titles = inCall ? TeamsTitles() : new List<string>();  // the windows are listed only while Teams holds the microphone
         if (inCall && !_declined && (CallDetector.PrejoinOnly(titles) || CallDetector.StillJoining(titles, _nextMeeting)))
@@ -465,7 +569,7 @@ public sealed class MonitorLoop : IDisposable
             else
                 _declined = true;  // start failed (logged); do not retry until the call ends
         }
-        else if (!inCall && _cfg.OtherApps == "record" && !_declined && OtherCall() is { } oc)
+        else if (!inCall && _cfg.OtherApps == "record" && !_declined && OtherCall(micUsers) is { } oc)
         {
             var cal = Outlook.Meeting(_cfg.UseOutlook, null, string.IsNullOrEmpty(oc.Title) ? null : oc.Title);
             var title = AppLogic.OtherCallTitle(oc, cal);
@@ -479,7 +583,7 @@ public sealed class MonitorLoop : IDisposable
         {
             if (_cfg.OnsiteOffer != "never" && _cfg.UseOutlook)
                 CalendarOffer();
-            if (!(_cfg.OtherApps == "record" && OtherCall() is not null))
+            if (!(_cfg.OtherApps == "record" && OtherCall(micUsers) is not null))
                 _declined = false;  // the declined call is over
             _nextMeeting = null;  // joining it was given up
             if (_prejoinSince is not null)  // the join dialog was closed without joining
@@ -491,7 +595,7 @@ public sealed class MonitorLoop : IDisposable
         }
     }
 
-    private static CallApp? OtherCall() => CallDetector.OtherCall();
+    private static CallApp? OtherCall(HashSet<string> micUsers) => CallDetector.OtherCall(micUsers, WindowTitles.OfExes);
 
     /// <summary>Titles of the visible Teams windows.</summary>
     private static List<string> TeamsTitles() => WindowTitles.Teams().Select(w => w.Title).ToList();
@@ -649,7 +753,7 @@ public sealed class MonitorLoop : IDisposable
     /// <summary>Start a recording; returns it, or null when one runs already or the start failed (the user is
     /// told loudly: a meeting that silently is not recorded is the worst outcome).</summary>
     internal Recorder? StartRecording(string title, bool manual = false, bool playback = false, bool onsite = false,
-                                      string? mic = null, CallApp? callApp = null)
+                                      string? mic = null, CallApp? callApp = null, bool byLog = false)
     {
         lock (_lock)
         {
@@ -690,6 +794,8 @@ public sealed class MonitorLoop : IDisposable
                     _hiddenWarned = false;
                     _continues = null;
                     _callApp = callApp;
+                    _byLog = byLog;
+                    _teamsCallId = null;
                     _watchdog.Reset();
                     _silence.Reset();
                     _calendar = null;  // looked up below, outside the lock (Outlook COM can take seconds)

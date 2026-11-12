@@ -1,4 +1,5 @@
 using Microsoft.Win32;
+using Recordingz.Capture.Audio;
 using Recordingz.Capture.Core;
 
 namespace Recordingz.Capture.Detection;
@@ -10,9 +11,13 @@ namespace Recordingz.Capture.Detection;
 /// </summary>
 public sealed record MicConsentEntry(string KeyName, string Ident, long Start, long Stop);
 
+/// <summary>The microphone right now: does Teams hold it, and every app that does (lower case idents).</summary>
+public sealed record MicState(bool Teams, HashSet<string> Users);
+
 /// <summary>
 /// Who holds the microphone right now, from HKCU\...\CapabilityAccessManager\ConsentStore\microphone.
 /// Windows writes LastUsedTimeStop = 0 while an app captures, which needs no audio API and no admin rights.
+/// Since 2.0.12 also from the Core Audio capture sessions (<see cref="Now"/>), as the registry can stay silent.
 /// </summary>
 public static class MicUsers
 {
@@ -28,8 +33,95 @@ public static class MicUsers
         "python.exe", "pythonw.exe", "recordingz-capture.exe",
     };
 
-    /// <summary>True while any *teams* app holds the microphone (LastUsedTimeStop == 0).</summary>
-    public static bool TeamsInUse() => TeamsInUse(ReadEntries());
+    /// <summary>True while Teams holds the microphone: the privacy registry (LastUsedTimeStop == 0) or an active
+    /// Core Audio capture session of Teams.</summary>
+    public static bool TeamsInUse() => Now().Teams;
+
+    /// <summary>
+    /// Who holds the microphone right now, from both sources: the privacy registry and the Core Audio capture
+    /// sessions. The registry alone missed every call after a Windows update (2026-11-11: KB5132061/KB5132688,
+    /// three Teams meetings, not one registry entry since the restart); the session list asks the audio engine
+    /// itself, whichever app records.
+    /// </summary>
+    public static MicState Now()
+    {
+        var entries = ReadEntries();
+        var sessions = Devices.CaptureSessions();
+        var tree = ProcessTree.Snapshot();
+        var me = new HashSet<int> { Environment.ProcessId };
+        if (tree.TryGetValue(Environment.ProcessId, out var self))
+            me.Add(self.Parent);
+        var bySessions = SessionIdents(sessions, pid => HostName(tree, pid), pid => ProcessTree.IsTeams(tree, pid), me);
+        var state = Combine(entries, bySessions);
+        NoteSource(TeamsInUse(entries), bySessions.Contains(TeamsIdent));
+        return state;
+    }
+
+    /// <summary>The ident a Teams capture session gets (its audio may run in a helper process).</summary>
+    public const string TeamsIdent = "ms-teams.exe";
+
+    /// <summary>Exe names (lower case) of the processes with an active capture session; Teams and its helper
+    /// processes as <see cref="TeamsIdent"/>; this recorder (and the tray that started it) left out.</summary>
+    public static HashSet<string> SessionIdents(IEnumerable<CaptureSession> sessions, Func<int, string> processName,
+                                                Func<int, bool> isTeams, ISet<int> me)
+    {
+        var own = OwnExeName();
+        var output = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var s in sessions)
+        {
+            if (s.ProcessId == 0 || me.Contains(s.ProcessId))
+                continue;
+            var ident = isTeams(s.ProcessId) ? TeamsIdent : (processName(s.ProcessId) ?? "").ToLowerInvariant();
+            if (ident.Length > 0 && !NotACall.Contains(ident) && ident != own && !ident.StartsWith("recordingz"))
+                output.Add(ident);
+        }
+        return output;
+    }
+
+    /// <summary>The exe name of a process; for a WebView2 process (WhatsApp, the new Outlook...) the app that hosts
+    /// it, so the call app is named, not its browser engine.</summary>
+    internal static string HostName(IReadOnlyDictionary<int, (int Parent, string Name)> tree, int pid)
+    {
+        var name = "";
+        for (int i = 0; i < 5 && tree.TryGetValue(pid, out var p); i++)
+        {
+            name = p.Name;
+            if (name != "msedgewebview2.exe" || p.Parent == 0 || p.Parent == pid)
+                break;
+            pid = p.Parent;
+        }
+        return name;
+    }
+
+    /// <summary>Pure rule behind <see cref="Now()"/>: the registry's holders plus the session holders.</summary>
+    public static MicState Combine(IEnumerable<MicConsentEntry> entries, ISet<string> sessionIdents)
+    {
+        var list = entries as IReadOnlyCollection<MicConsentEntry> ?? entries.ToList();
+        var users = Current(list);
+        users.UnionWith(sessionIdents);
+        return new MicState(TeamsInUse(list) || sessionIdents.Contains(TeamsIdent), users);
+    }
+
+    private static bool? _registryMissed;
+
+    // Says once in the log when only the session list sees Teams on the microphone, and when the registry is back.
+    private static void NoteSource(bool registry, bool sessions)
+    {
+        if (registry == sessions)
+        {
+            if (registry && _registryMissed == true)
+            {
+                Log.Info("microphone: the Windows privacy registry sees Teams again");
+                _registryMissed = false;
+            }
+            return;
+        }
+        if (sessions && _registryMissed != true)
+        {
+            Log.Warn("microphone: Teams records (Core Audio session), but the Windows privacy registry has no entry for it");
+            _registryMissed = true;
+        }
+    }
 
     /// <summary>Pure rule behind <see cref="TeamsInUse()"/>.</summary>
     public static bool TeamsInUse(IEnumerable<MicConsentEntry> entries) =>
@@ -47,10 +139,10 @@ public static class MicUsers
     }
 
     /// <summary>
-    /// Apps holding the microphone right now: packaged app names and exe file names, lower case.
+    /// Apps holding the microphone right now (the registry and the capture sessions): packaged app names and exe file names, lower case.
     /// This recorder itself is left out.
     /// </summary>
-    public static HashSet<string> Current() => Current(ReadEntries());
+    public static HashSet<string> Current() => Now().Users;
 
     /// <summary>Pure rule behind <see cref="Current()"/>.</summary>
     public static HashSet<string> Current(IEnumerable<MicConsentEntry> entries)

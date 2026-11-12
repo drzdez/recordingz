@@ -35,6 +35,7 @@ public sealed class TrayApp : ApplicationContext, INotifier
     private Release? _balloonUpdate;  // the balloon on screen offers this release (a click installs it)
     private Release? _offerAfterRecording;  // found during a recording: offered when it ends
     private string? _balloonStem;  // the recording the balloon on screen is about (UI thread only)
+    private Action? _balloonAction;  // the balloon on screen offers this (a click runs it; UI thread only)
     private readonly System.Windows.Forms.Timer _reviewPoll = new() { Interval = 3000 };
     private ReviewJobsState? _review;  // what the review server does (ReviewJobs), UI thread only
     private HashSet<string>? _reviewSeen;  // its ended jobs already announced
@@ -97,7 +98,12 @@ public sealed class TrayApp : ApplicationContext, INotifier
         // a click on a balloon opens the review page, on the recording it was about ("Saved …")
         _icon.BalloonTipClicked += (_, _) =>
         {
-            if (_balloonUpdate is { } rel)
+            if (_balloonAction is { } act)
+            {
+                _balloonAction = null;  // once
+                act();
+            }
+            else if (_balloonUpdate is { } rel)
                 InstallUpdate(rel);
             else
                 OpenReview(stem: _balloonStem);
@@ -144,6 +150,7 @@ public sealed class TrayApp : ApplicationContext, INotifier
         OnUi(() =>
         {
             _balloonStem = null;
+            _balloonAction = null;
             _balloonUpdate = null;
             _icon.ShowBalloonTip(5000, "recordingz", message, ToolTipIcon.None);
         });
@@ -154,8 +161,20 @@ public sealed class TrayApp : ApplicationContext, INotifier
         OnUi(() =>
         {
             _balloonStem = stem;
+            _balloonAction = null;
             _balloonUpdate = null;
             _icon.ShowBalloonTip(8000, "recordingz – kliknutím otevřete", message, ToolTipIcon.None);
+        });
+    }
+
+    public void NotifyAction(string message, Action onClick)
+    {
+        OnUi(() =>
+        {
+            _balloonStem = null;
+            _balloonUpdate = null;
+            _balloonAction = onClick;
+            _icon.ShowBalloonTip(15000, "recordingz – kliknutím spustíte nahrávání", message, ToolTipIcon.Warning);
         });
     }
 
@@ -341,6 +360,7 @@ public sealed class TrayApp : ApplicationContext, INotifier
     private void ShowUpdateBalloon(Release rel)
     {
         _balloonStem = null;
+        _balloonAction = null;
         _balloonUpdate = rel;
         _icon.ShowBalloonTip(10000, "recordingz – nová verze",
                              $"Je k dispozici recordingz {rel.Version} (máte {Versions.AppVersion}). Kliknutím nainstalujete.",

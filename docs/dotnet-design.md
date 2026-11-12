@@ -42,7 +42,8 @@ The modules match parts of the prototype one to one, so it is easy to trace wher
 
 ```
  MonitorLoop (every 3 s)
-   │  MicUsers.TeamsInUse() / MicUsers.Current()  ← ConsentStore registry: who holds the microphone right now
+   │  MicUsers.Now()                              ← ConsentStore registry + Core Audio capture sessions: who holds the microphone
+   │  TeamsCallLog                                ← Teams' own log: the calls it reports active (warning, next meeting)
    │  WindowTitles + CallDetector                 ← join screen? a meeting in a browser?
    ▼
  start ── title: Teams window → Outlook.Meeting() (by title, then time) → the app's name
@@ -81,6 +82,19 @@ Audio sessions and picks the microphone of the call's process (Teams → known c
 screen holds the microphone too, so recording starts only after joining (the meeting window). A browser counts only
 with a meeting open in the window title, otherwise dictation or voice search would be recorded. The app's own entry
 (`recordingz-capture.exe`; until 2.0 `teamsrec-capture.exe`, a name containing "teams") never counts as Teams.
+
+**Two sources for the microphone, since 2.0.12.** After the Windows updates of 2026-11-10 (KB5132061, KB5132688) the
+registry stopped recording microphone use: three Teams meetings went unrecorded. The Core Audio capture sessions (the
+audio engine's own list of who records, per process; Teams' helper processes count as Teams, a WebView2 process as
+the app that hosts it) are now read next to the registry; either one is enough. The log says once when only the
+sessions see Teams.
+
+**Teams' log as a safety net.** `TeamsCallLog` reads only the `TeamsCallTracker` lines of the new Teams' log
+(`Call became active: <id>` / `Call ended: <id>`), incrementally, newest file by name (the directory listing shows an
+open file's size and time late). Its format is Teams' own and may change, so it never starts a recording by itself:
+a call it reports that nothing records for 30 s raises a warning balloon whose click starts the recording (it then
+ends when the log says the call ended); and a recorded call whose id ended while another became active is the user
+joining the next meeting straight away (the microphone stays held across, so the call never looked ended).
 
 **A watchdog with a growing pause.** When the audio stops coming (a Bluetooth headset gone to sleep), the reopened
 streams are judged after 12 s and the next attempt waits 0/30/60/180/300 s (at most 8×). Without it the prototype once

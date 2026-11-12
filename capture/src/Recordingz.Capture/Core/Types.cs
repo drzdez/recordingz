@@ -26,6 +26,10 @@ public interface INotifier
     /// clicked. Without a tray (tests) it is a plain message.</summary>
     void NotifyRecording(string message, string stem) => Notify(message);
 
+    /// <summary>A message whose balloon, when clicked, runs the action (start the recording it warns about). Without
+    /// a tray (tests) it is a plain message.</summary>
+    void NotifyAction(string message, Action onClick) => Notify(message);
+
     /// <summary>A discreet mark on the tray icon (no balloon, no text on screen – the user may be presenting);
     /// the reason shows only in the tooltip. One mark per key; null removes it.</summary>
     void Mark(string key, string? reason) { }

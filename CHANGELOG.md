@@ -3,6 +3,18 @@
 Notes for each release, newest first, written by hand for the people using it. The heading format is fixed
 (`## <version> – <date>`); a test keeps an entry for the current version.
 
+## 2.0.12 – 2026-11-12
+
+- **Calls are detected again.** After the Windows updates of 10 November the system no longer records which app uses
+  the microphone, and recordingz started no recording at all. It now also asks the audio engine itself who records
+  from the microphone, for Teams and for the other call apps.
+- **A Teams call that nothing records is announced:** after 30 s the tray icon beeps and says so, and a click on the
+  message starts the recording (it ends with the call). While you present, only the tray icon's tooltip says it.
+- Going from one Teams meeting **straight to the next** ends the recording and starts a new one for the next meeting
+  (before, one recording could run on over several meetings).
+- A processing that runs **nothing on this PC** (a cloud transcript, cloud or no minutes) no longer waits for a running
+  recording to end.
+
 ## 2.0.11 – 2026-11-04
 
 - **The key entered in Nastavení → Klíče API wins** over a key in an environment variable (before, a stale
