@@ -17,8 +17,8 @@ $UvVersion = "0.12.9"
 $UvSha256 = "ddbfcee1ac615a0499f6aa97b5ec8ebdf3ee4a7714a48055ec2ba0030e3cf810"
 # ffmpeg 9.0 (libx264 for the window video needs the GPL build; shared = one set of DLLs for ffmpeg and ffprobe).
 # BtbN deletes its daily builds after about two weeks: a release later than that needs a newer pin here.
-$FfmpegUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-22-13-06/ffmpeg-n9.0.2-33-g4cf298e66a-win64-gpl-shared-9.0.zip"
-$FfmpegSha256 = "1b7806663ae9a7446fc58fecc49e0e08733d8fa6aa57bac3f028e16f19262cf9"
+$FfmpegUrl = "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-11-12-15-40/ffmpeg-n9.0.2-57-gd838f9f9ae-win64-gpl-shared-9.0.zip"
+$FfmpegSha256 = "87a17e366ceb90219e292128b4b23bcf9a929109639b23f5c45040848c87ced4"
 
 $root = Split-Path -Parent $PSScriptRoot  # the repository
 $Transcribe = Join-Path $root "transcribe"
